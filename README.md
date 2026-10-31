@@ -25,6 +25,24 @@ keeps the same on-disk format. Other mods can use `SharedArtApi` without CIL.
 CIL's `GlbCacheApi` remains a separate, model-render-cache migration API for
 add-ons; it does not implement or control the shared art library.
 
+## 3.0.7 generated furniture lighting
+
+Generated furniture now uses Silverpine's `Materials/sprite-diffuse` material
+(`Sprites/Diffuse`), matching native furniture's response to world lights.
+The material is assigned on creation and when furniture is reconstructed from
+a save. This covers PNG, cached art, and GLB-rendered sprites without re-rendering
+the artwork or changing pack JSON. Existing generated furniture receives the
+correction after restarting and loading its save.
+
+Native pickup highlighting remains unchanged: late sprite updates do not
+replace an existing renderer's temporary unlit material or its red/green tint.
+The native material is shared, not copied per object. Missing resources leave
+the current material intact and produce one warning. Light-emitting adapters,
+inventory artwork, native prefab clones, and editor previews are unchanged.
+
+The Release build and 165 headless regression checks pass. In-game lighting,
+pickup highlighting, and save/reload still need visual verification.
+
 ## 3.0.6 bootstrap lifecycle fixes
 
 Silverpine destroys the initial BepInEx plugin host while the game continues.
@@ -258,7 +276,7 @@ session retains ownership. Pack edits do not hot-replace registered templates.
 
 ## API for crafting frameworks and other mods
 
-Custom Item Loader 3.0.6 exposes a public API in:
+Custom Item Loader 3.0.7 exposes a public API in:
 
 ```csharp
 using SilverpineMods.CustomItemLoader;

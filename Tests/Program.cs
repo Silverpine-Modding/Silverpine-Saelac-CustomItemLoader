@@ -15,6 +15,7 @@ void Check(bool value, string message)
 }
 
 LifecycleChecks.Run(Check);
+FurnitureLightingChecks.Run(Check);
 
 float panelBudget = 2 * EditorFormLayout.OuterInset + EditorFormLayout.SidebarWidth +
     EditorFormLayout.PreviewWidth + EditorFormLayout.DetailsWidth + 2 * EditorFormLayout.PanelGap;
@@ -430,8 +431,25 @@ if (args.Length == 1)
     Check(!Calls(editor.Methods.Single(m => m.Name == "SaveCurrent"), "RefreshDocuments"), "saving one pack cannot reload and discard other open documents");
     Check(Calls(editor.Methods.Single(m => m.Name == "Open"), "set_EscapeHandler") &&
         !Calls(editor.Methods.Single(m => m.Name == "Update"), "GetKeyDown"), "editor Escape is exclusively owned by its ModTools session");
-    Check(Calls(pluginAssembly.MainModule.Types.Single(t => t.Name == "GeneratedFurnitureFactory").Methods.Single(m => m.Name == "Attach"), "RegisterAlias"),
+    var furniture = pluginAssembly.MainModule.Types.Single(t => t.Name == "GeneratedFurnitureFactory");
+    Check(Calls(furniture.Methods.Single(m => m.Name == "Attach"), "RegisterAlias"),
         "collision-safe furniture registration retains legacy save aliases");
+    Check(Calls(furniture.Methods.Single(m => m.Name == "CreateTemplate"), "GetOrCreateRenderer") &&
+        Calls(furniture.Methods.Single(m => m.Name == "RestoreInstance"), "ApplyDiffuse"),
+        "compiled furniture creation and load restoration apply native diffuse lighting");
+    var applySprites = furniture.Methods.Single(m => m.Name == "ApplySprites");
+    Check(Calls(applySprites, "GetOrCreateRenderer") && !Calls(applySprites, "ApplyDiffuse") &&
+        !Calls(applySprites, "set_sharedMaterial") && !Calls(applySprites, "set_material"),
+        "compiled asynchronous sprite refresh does not reset existing pickup highlight materials");
+    var furnitureLighting = pluginAssembly.MainModule.Types.Single(t => t.Name == "FurnitureSpriteLighting");
+    var applyDiffuse = furnitureLighting.Methods.Single(m => m.Name == "ApplyDiffuse");
+    Check(Calls(applyDiffuse, "set_sharedMaterial") && !Calls(applyDiffuse, "set_material") &&
+        !Calls(applyDiffuse, "set_color") && !applyDiffuse.Body.Instructions.Any(i => i.OpCode == Mono.Cecil.Cil.OpCodes.Newobj),
+        "compiled furniture lighting shares the native material without tint changes or material allocations");
+    var pickupEnable = assembly.MainModule.Types.Single(t => t.Name == "Pickupable").Methods.Single(m => m.Name == "SetEnabled");
+    Check(pickupEnable.Body.Instructions.Any(i => Equals(i.Operand, "Materials/sprite-diffuse")) &&
+        pickupEnable.Body.Instructions.Any(i => Equals(i.Operand, "Materials/sprite-unlit")),
+        "installed game's pickup highlighting uses the same diffuse resource when restoring normal lighting");
     var light = pluginAssembly.MainModule.Types.Single(t => t.Name == "CustomItemAlwaysOnLightAdapter");
     Check(Calls(light.Methods.Single(m => m.Name == "Start"), "Apply"), "light settings reconcile after native deserialization instead of only in Awake");
 }

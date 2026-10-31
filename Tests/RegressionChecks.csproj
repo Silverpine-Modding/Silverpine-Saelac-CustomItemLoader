@@ -23,6 +23,7 @@
     <Compile Include="..\EquippedItemState.cs" Link="Production\EquippedItemState.cs" />
     <Compile Include="..\PublicApi.Readiness.cs" Link="Production\PublicApi.Readiness.cs" />
     <Compile Include="..\RegistrationLifecycle.cs" Link="Production\RegistrationLifecycle.cs" />
+    <Compile Include="..\FurnitureSpriteLighting.cs" Link="Production\FurnitureSpriteLighting.cs" />
     <Compile Include="..\BasicAttributeModifierRuntime.cs" Link="Production\BasicAttributeModifierRuntime.cs" />
     <Compile Include="..\CustomAmmunitionSafety.cs" Link="Production\CustomAmmunitionSafety.cs" />
     <Compile Include="..\..\AttributeExpansion\CappedArmorValue.cs" Link="Production\CappedArmorValue.cs" />

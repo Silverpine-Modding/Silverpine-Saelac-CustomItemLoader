@@ -251,6 +251,8 @@ internal static class GeneratedFurnitureFactory
             placedSprite,
             placedRotations,
             record.Settings);
+        // Awake covers both new placement and instances reconstructed from saves.
+        FurnitureSpriteLighting.ApplyDiffuse(gameObject.GetComponent<SpriteRenderer>());
 
         NPCVisibleObject visible =
             gameObject.GetComponent<NPCVisibleObject>() ??
@@ -275,7 +277,7 @@ internal static class GeneratedFurnitureFactory
         template.hideFlags = HideFlags.HideAndDontSave;
         UnityEngine.Object.DontDestroyOnLoad(template);
 
-        SpriteRenderer renderer = template.AddComponent<SpriteRenderer>();
+        SpriteRenderer renderer = FurnitureSpriteLighting.GetOrCreateRenderer(template);
         renderer.sprite = sprite;
 
         BoxCollider2D collider = template.AddComponent<BoxCollider2D>();
@@ -349,9 +351,9 @@ internal static class GeneratedFurnitureFactory
         Sprite[] rotationSprites,
         FurnitureDefinition settings)
     {
-        SpriteRenderer renderer =
-            gameObject.GetComponent<SpriteRenderer>() ??
-            gameObject.AddComponent<SpriteRenderer>();
+        // Existing renderers can be temporarily unlit/tinted by native pickup
+        // highlighting. A late GLB sprite update must not overwrite that state.
+        SpriteRenderer renderer = FurnitureSpriteLighting.GetOrCreateRenderer(gameObject);
         renderer.sprite = mainSprite;
 
         BoxCollider2D collider =
