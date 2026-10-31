@@ -15,7 +15,7 @@ namespace SilverpineMods.CustomItemLoader;
 /// Public integration API for crafting frameworks and other BepInEx plugins.
 /// All registration events are raised on Unity's main thread.
 /// </summary>
-public static class CustomItemApi
+public static partial class CustomItemApi
 {
     public const int ApiVersion = 11;
     public const string GlbSpriteRendererVersion = "13";
@@ -27,31 +27,15 @@ public static class CustomItemApi
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> TemplateComponentRegistrations =
         new(StringComparer.OrdinalIgnoreCase);
-    private static bool registrationComplete;
 
     /// <summary>Raised immediately after an item is inserted into ItemLibrary.Items.</summary>
     public static event EventHandler<CustomItemRegisteredEventArgs>? ItemRegistered;
-
-    /// <summary>
-    /// Raised once after the loader has synchronously registered every valid
-    /// definition. Uncached GLB thumbnails may still be rendering.
-    /// </summary>
-    public static event EventHandler? RegistrationCompleted;
 
     /// <summary>
     /// Raised when an asynchronously rendered GLB sprite replaces its
     /// temporary fallback.
     /// </summary>
     public static event EventHandler<CustomItemSpriteReadyEventArgs>? SpriteReady;
-
-    public static bool IsRegistrationComplete
-    {
-        get
-        {
-            lock (Sync)
-                return registrationComplete;
-        }
-    }
 
     /// <summary>Returns an immutable snapshot in registration order.</summary>
     public static IReadOnlyList<CustomItemInfo> GetRegisteredItems()
@@ -506,40 +490,6 @@ public static class CustomItemApi
                 nameof(itemId));
     }
 
-    /// <summary>
-    /// Runs immediately if registration is complete; otherwise runs once
-    /// when registration completes. The callback receives a stable snapshot.
-    /// </summary>
-    public static void WhenReady(
-        Action<IReadOnlyList<CustomItemInfo>> callback)
-    {
-        if (callback == null)
-            throw new ArgumentNullException(nameof(callback));
-
-        bool runNow;
-        lock (Sync)
-        {
-            runNow = registrationComplete;
-            if (!runNow)
-            {
-                EventHandler? handler = null;
-                handler = (_, _) =>
-                {
-                    RegistrationCompleted -= handler;
-                    InvokeSafely(
-                        () => callback(GetRegisteredItems()),
-                        "WhenReady callback");
-                };
-                RegistrationCompleted += handler;
-            }
-        }
-
-        if (runNow)
-            InvokeSafely(
-                () => callback(GetRegisteredItems()),
-                "WhenReady callback");
-    }
-
     internal static CustomItemInfo PublishRegistered(
         string packId,
         string itemId,
@@ -582,16 +532,6 @@ public static class CustomItemApi
             new CustomItemRegisteredEventArgs(info),
             nameof(ItemRegistered));
         return info;
-    }
-
-    internal static void PublishRegistrationCompleted()
-    {
-        lock (Sync)
-            registrationComplete = true;
-        RaiseSafely(
-            RegistrationCompleted,
-            EventArgs.Empty,
-            nameof(RegistrationCompleted));
     }
 
     internal static void PublishSpriteReady(string spriteKey, Sprite sprite)
@@ -701,32 +641,6 @@ public static class CustomItemApi
             InvokeSafely(
                 () => handler(null, arguments),
                 eventName + " subscriber");
-    }
-
-    private static void RaiseSafely(
-        EventHandler? handlers,
-        EventArgs arguments,
-        string eventName)
-    {
-        if (handlers == null)
-            return;
-        foreach (EventHandler handler in handlers.GetInvocationList())
-            InvokeSafely(
-                () => handler(null, arguments),
-                eventName + " subscriber");
-    }
-
-    private static void InvokeSafely(Action callback, string description)
-    {
-        try
-        {
-            callback();
-        }
-        catch (Exception exception)
-        {
-            Plugin.Log.LogError(
-                $"Custom Item API {description} failed: {exception}");
-        }
     }
 }
 

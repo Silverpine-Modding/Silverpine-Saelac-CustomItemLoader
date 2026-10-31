@@ -82,6 +82,7 @@ public sealed class Player
 public sealed class InventoryUI { public static InventoryUI? Instance; public void UpdateBulkBar() { } }
 public sealed class UpperNotificationUI { public static UpperNotificationUI Instance = new(); public void OneOff(string message) { } }
 public static class ItemLibrary { public static List<Item> Items = new(); }
+public sealed class MainMenuUI { }
 public sealed class ActionQueue
 {
     public static ActionQueue Instance = new();
@@ -108,6 +109,18 @@ public sealed class VersionSafeStorage
     }
 }
 namespace UnityEngine { public static class Mathf { public static int RoundToInt(float x) => (int)Math.Round(x); } }
+namespace UnityEngine.SceneManagement
+{
+    public struct Scene { }
+    public enum LoadSceneMode { Single, Additive }
+    public static class SceneManager
+    {
+        public static event Action<Scene, LoadSceneMode>? sceneLoaded;
+        public static int SubscriberCount => sceneLoaded?.GetInvocationList().Length ?? 0;
+        public static void Load() => sceneLoaded?.Invoke(new Scene(), LoadSceneMode.Single);
+        public static void Reset() => sceneLoaded = null;
+    }
+}
 namespace SilverpineMods.AttributeExpansion
 {
     internal static class Plugin { internal static SilverpineMods.CustomItemLoader.TestLog Log = new(); }
@@ -136,7 +149,12 @@ namespace HarmonyLib
 }
 namespace Silverpine.ModdingTools
 {
-    public sealed class ModRegistration : IDisposable { public void Dispose() { } }
+    public sealed class ModRegistration : IDisposable
+    {
+        private Action? onDispose;
+        public ModRegistration(Action action) => onDispose = action;
+        public void Dispose() { var action = onDispose; onDispose = null; action?.Invoke(); }
+    }
     public sealed class ModSaveDataDefinition
     {
         public string Id = ""; public int CurrentVersion;
@@ -146,7 +164,13 @@ namespace Silverpine.ModdingTools
     {
         public static ModSaveDataDefinition Definition = null!;
         public static event Action? Loaded;
-        public static ModRegistration Register(string owner, ModSaveDataDefinition definition) { Definition = definition; return new(); }
+        public static int RegisterCalls, ActiveRegistrations;
+        public static int LoadedSubscribers => Loaded?.GetInvocationList().Length ?? 0;
+        public static ModRegistration Register(string owner, ModSaveDataDefinition definition)
+        {
+            RegisterCalls++; ActiveRegistrations++; Definition = definition;
+            return new(() => ActiveRegistrations--);
+        }
         public static void NotifyLoaded() => Loaded?.Invoke();
     }
 }
@@ -159,10 +183,20 @@ namespace SilverpineMods.CustomItemLoader
         public const string PluginGuid = "regression.tests";
         public static TestLog Log = new();
         public static Dictionary<string, AttributeModifiersDefinition> AttributeModifiers = new();
+        public static Action ResolveVisuals = () => { };
+        internal static void ResolveAvailableInheritedVisuals() => ResolveVisuals();
+    }
+    public sealed class CustomItemInfo { public Item Template = new(); }
+    public static partial class CustomItemApi
+    {
+        private static readonly object Sync = new();
+        internal static readonly List<CustomItemInfo> TestItems = new();
+        public static IReadOnlyList<CustomItemInfo> GetRegisteredItems() => TestItems.ToArray();
     }
     internal sealed class TestLog
     {
         public List<string> Messages = new();
+        public void LogInfo(string message) => Messages.Add(message);
         public void LogWarning(string message) => Messages.Add(message);
         public void LogError(string message) => Messages.Add(message);
     }

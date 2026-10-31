@@ -7,7 +7,8 @@ dotnet run --project 'Plugin Development\CustomItemLoader\Tests\RegressionChecks
 ```
 
 The harness links the production equipment-snapshot, basic-modifier, armor
-ledger/persistence, asset-import, preview-identity, and ammunition-guard code.
+ledger/persistence, asset-import, preview-identity, ammunition-guard, startup
+lifecycle, and public readiness code.
 It uses small game/Modding Tools/Harmony contracts for headless execution.
 The bundled Harmony targets Unity Mono and cannot execute in the .NET 9 host.
 Cecil checks the actual installed game's method signatures and serialization
@@ -22,7 +23,14 @@ per-view offset and shared-library code is also exercised: independent/reset
 directions, JSON duplication, finite/bounded offsets, pivot math, art deduplication,
 original GLB names, invalid manifests, and GLB-free pack copies.
 
-Editor smoke checks for 3.0.5: open through Modding Tools; exercise all four
+Lifecycle coverage includes host-independent scene completion, an already-loaded
+menu fallback, early and repeated signals, later-plugin item registrations,
+reentrant and failing subscribers, late subscribers, optional preparation failure,
+and idempotent equipment-save registration. Compiled-assembly guards verify that
+bootstrap `OnDestroy` only logs, slot callbacks are static, and readiness no
+longer starts a coroutine. Scene and menu dispatch are simulated, not live Unity.
+
+Editor smoke checks for 3.0.6: open through Modding Tools; exercise all four
 tabs and the native file picker; drag Front and Back to different positions,
 save/restart, rotate the placement cursor and placed furniture; confirm offsets
 match. Repeat with a single PNG, cached four-view art with its GLB absent,
@@ -31,7 +39,7 @@ and inherited base-game visuals. Check 1280×720 and 1920×1080 layouts.
 These are not live Unity integration tests. Before publishing, smoke-test a
 backup save in game:
 
-The 3.0.5 run includes 130 checks with the game-directory argument. Layout
+The 3.0.6 run includes 152 checks with the game-directory argument. Layout
 budgets and binary guards verify bounded columns, stacked field labels,
 text-measured action buttons, selector width/height measured with the drawing
 style, and a Refresh preview button outside the scroll area. They do not
@@ -61,6 +69,12 @@ in the sidebar. Paths and IDs must only wrap visually, with no stored newlines.
    all directions load. An ambiguous legacy name must report a re-render need.
 6. Fire a custom ranged weapon with no ammo, wrong-component ammo, zero charges,
    and valid ammo. Check notification/targeting and absence of exceptions.
+7. Cold-start with Growables and a slot-providing add-on installed. After the
+   startup-host-destroyed message, confirm a single CIL registration-complete
+   message and Growables' registration count. Enter a save and actually plant
+   a custom seed. Return to menu and load again: no duplicate registration or
+   planting components. Verify equipment state still saves/restores through the
+   Modding Tools companion file. Also test without Growables and with no packs.
 
 Keep the native save and its `.moddingtools` companion together. An older
 save cannot tell this update which bonuses an earlier pack version applied.

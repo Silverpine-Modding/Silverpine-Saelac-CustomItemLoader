@@ -34,6 +34,8 @@ internal static class EquippedItemState
 
     internal static void Register()
     {
+        if (registration != null)
+            return;
         registration = ModSaveData.Register(Plugin.PluginGuid, new ModSaveDataDefinition
         {
             Id = Plugin.PluginGuid + ".equipment", CurrentVersion = 1,
@@ -48,6 +50,7 @@ internal static class EquippedItemState
     {
         ModSaveData.Loaded -= OnLoaded;
         registration?.Dispose();
+        registration = null;
     }
 
     internal static Snapshot? Get(Item item) =>

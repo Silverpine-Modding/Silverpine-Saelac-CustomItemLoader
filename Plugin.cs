@@ -8,7 +8,6 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Silverpine.ModdingTools;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -29,7 +28,7 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "renegadex.silverpine.customitemloader";
     public const string PluginName = "Custom Item Loader";
-    public const string PluginVersion = "3.0.5";
+    public const string PluginVersion = "3.0.6";
 
     internal static ManualLogSource Log = null!;
     internal static readonly Dictionary<string, Sprite> CustomSprites =
@@ -63,8 +62,8 @@ public sealed class Plugin : BaseUnityPlugin
     internal static string DefinitionDirectory = "";
     internal static string ModelSourceDirectory = "";
     private static Sprite? errorSprite;
-    private bool registrationStarted;
-    private bool registrationCompletionPublished;
+    private static bool initialized;
+    private static bool registrationStarted;
 
     internal static Sprite ErrorSprite
     {
@@ -97,7 +96,13 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Awake()
     {
+        // Silverpine may destroy the bootstrap component without unloading us.
+        // Registrations and callbacks belong to the process, not that component.
+        if (initialized)
+            return;
+        initialized = true;
         Log = Logger;
+        RegistrationLifecycle.Initialize();
         EquippedItemState.Register();
         DefinitionDirectory = Path.Combine(Paths.ConfigPath, "CustomItemLoader");
         ModelSourceDirectory = Path.Combine(SharedArtLibrary.Root, "models");
@@ -124,34 +129,29 @@ public sealed class Plugin : BaseUnityPlugin
             OnEquipmentSlotRegistered;
         _ = CustomEquipmentSlotRegistry.GetSlots();
         RegisterItems();
-        StartCoroutine(PublishRegistrationCompletedAfterPluginAwakes());
+        RegistrationLifecycle.MarkInitialScanFinished();
     }
 
-    private IEnumerator PublishRegistrationCompletedAfterPluginAwakes()
-    {
-        yield return null;
-        if (registrationCompletionPublished)
-            yield break;
-
-        ResolveAvailableInheritedVisuals();
-        CustomAmmunitionSafety.ValidateRegisteredWeapons();
-        registrationCompletionPublished = true;
-        CustomItemApi.PublishRegistrationCompleted();
-    }
-
-    private static void ResolveAvailableInheritedVisuals()
+    internal static void ResolveAvailableInheritedVisuals()
     {
         foreach (KeyValuePair<string, Item> pair in
                  InheritedVisualSources.ToArray())
         {
-            Sprite? sprite = ItemPackLoader.TryResolveCloneVisualSprite(
-                pair.Value);
-            if (sprite != null)
-                PromoteInheritedVisual(pair.Key, sprite);
+            try
+            {
+                Sprite? sprite = ItemPackLoader.TryResolveCloneVisualSprite(
+                    pair.Value);
+                if (sprite != null)
+                    PromoteInheritedVisual(pair.Key, sprite);
+            }
+            catch (Exception exception)
+            {
+                Log.LogWarning($"Could not resolve inherited visual '{pair.Key}': {exception}");
+            }
         }
     }
 
-    private void RegisterItems()
+    private static void RegisterItems()
     {
         if (registrationStarted)
             return;
@@ -174,7 +174,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
-    private void OnEquipmentSlotRegistered(
+    private static void OnEquipmentSlotRegistered(
         object? sender,
         CustomEquipmentSlotRegisteredEventArgs arguments)
     {
@@ -194,12 +194,12 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void OnDestroy()
     {
-        EquippedItemState.Dispose();
-        CustomEquipmentSlotRegistry.SlotRegistered -=
-            OnEquipmentSlotRegistered;
+        // This is bootstrap cleanup in Silverpine, not plugin hot-unload.
+        Log?.LogInfo("Startup host destroyed; item readiness, equipment-save " +
+            "tracking, slot callbacks, and runtime patches remain active.");
     }
 
-    private async void CompleteGlbRendering(IReadOnlyList<PendingGlb> pending)
+    private static async void CompleteGlbRendering(IReadOnlyList<PendingGlb> pending)
     {
         await ItemPackLoader.RenderPendingGlbsAsync(pending);
     }

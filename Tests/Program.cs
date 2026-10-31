@@ -14,6 +14,8 @@ void Check(bool value, string message)
     Console.WriteLine("PASS: " + message); passed++;
 }
 
+LifecycleChecks.Run(Check);
+
 float panelBudget = 2 * EditorFormLayout.OuterInset + EditorFormLayout.SidebarWidth +
     EditorFormLayout.PreviewWidth + EditorFormLayout.DetailsWidth + 2 * EditorFormLayout.PanelGap;
 Check(panelBudget == EditorFormLayout.CanvasWidth, "editor panels and explicit gutters fit the ModTools logical canvas");
@@ -78,6 +80,9 @@ void LoadArmor(Damagable target, byte[] data)
 }
 
 EquippedItemState.Register();
+EquippedItemState.Register();
+Check(ModSaveData.RegisterCalls == 1 && ModSaveData.ActiveRegistrations == 1 && ModSaveData.LoadedSubscribers == 1,
+    "repeated equipment initialization preserves a single save registration and load callback");
 Player.Instance = new Player();
 Player.Instance.damagable.armorValues[DamageType.Normal] = 240;
 ArmorPersistence.Clamp(Player.Instance.damagable);
@@ -354,13 +359,31 @@ if (args.Length == 1)
             "installed game has the exact Damagable." + method + " storage hook expected by the transpiler");
     foreach (var target in new[] { ("Item", "OnEquipped"), ("Item", "OnUnequipped"), ("StatusEffect_Resist", "OnExpire"),
         ("Racial_ThickSkin", "OnExpire"), ("ItemComponent_Clothing", "GetArmorQualityMultiplied"), ("ItemComponent_RangedWeapon", "OnUse"),
-        ("ItemComponent_Enchantment", "GetMultiplier"), ("Market", "SellStock"), ("WorldItem", "GetSprite") })
+        ("ItemComponent_Enchantment", "GetMultiplier"), ("Market", "SellStock"), ("WorldItem", "GetSprite"), ("MainMenuUI", "Start") })
         Check(assembly.MainModule.Types.Single(t => t.Name == target.Item1).Methods.Any(m => m.Name == target.Item2),
             "installed game patch target exists: " + target.Item1 + "." + target.Item2);
 
     using var pluginAssembly = AssemblyDefinition.ReadAssembly(Path.Combine(args[0], "Plugin Development", "CustomItemLoader", "bin", "Release", "CustomItemLoader.dll"));
     var editor = pluginAssembly.MainModule.Types.Single(t => t.Name == "CustomItemEditorUI");
     bool Calls(MethodDefinition method, string target) => method.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == target);
+    var plugin = pluginAssembly.MainModule.Types.Single(t => t.Name == "Plugin");
+    var awake = plugin.Methods.Single(m => m.Name == "Awake");
+    var destroy = plugin.Methods.Single(m => m.Name == "OnDestroy");
+    Check(!Calls(awake, "StartCoroutine") && Calls(awake, "Initialize") && Calls(awake, "MarkInitialScanFinished"),
+        "compiled plugin startup uses host-independent readiness instead of a bootstrap coroutine");
+    Check(destroy.Body.Instructions.Where(i => i.Operand is MethodReference).All(i => ((MethodReference)i.Operand).Name == "LogInfo"),
+        "bootstrap OnDestroy only logs; it cannot dispose save tracking, unsubscribe slots, or unpatch");
+    Check(plugin.Methods.Single(m => m.Name == "OnEquipmentSlotRegistered").IsStatic && Calls(awake, "add_SlotRegistered") &&
+        !plugin.Methods.Where(m => m.HasBody).Any(m => Calls(m, "remove_SlotRegistered")),
+        "equipment-slot retry listener is static and survives bootstrap destruction");
+    Check(plugin.Fields.Single(f => f.Name == "initialized").IsStatic && plugin.Fields.Single(f => f.Name == "registrationStarted").IsStatic,
+        "plugin initialization and pack scan are process-scoped, not repeated per component");
+    var readyPatch = pluginAssembly.MainModule.Types.Single(t => t.Name == "CustomItemStartupReadyPatch");
+    Check(Calls(readyPatch.Methods.Single(m => m.Name == "Prefix"), "CompleteStartup") &&
+        readyPatch.CustomAttributes.Any(a => a.AttributeType.Name == "HarmonyPatch" &&
+            a.ConstructorArguments[0].Value is TypeReference target && target.Name == "MainMenuUI" &&
+            (string)a.ConstructorArguments[1].Value == "Start"),
+        "compiled readiness fallback targets MainMenuUI.Start independently of the plugin component");
     var actionButton = editor.Methods.Single(m => m.Name == "DrawActionButton");
     Check(Calls(actionButton, "GetActionButtonWidth") && Calls(editor.Methods.Single(m => m.Name == "GetActionButtonWidth"), "CalcSize") &&
         Calls(actionButton, "Width") && Calls(actionButton, "MinHeight"),
@@ -412,5 +435,11 @@ if (args.Length == 1)
     var light = pluginAssembly.MainModule.Types.Single(t => t.Name == "CustomItemAlwaysOnLightAdapter");
     Check(Calls(light.Methods.Single(m => m.Name == "Start"), "Apply"), "light settings reconcile after native deserialization instead of only in Awake");
 }
+EquippedItemState.Dispose();
+Check(ModSaveData.ActiveRegistrations == 0 && ModSaveData.LoadedSubscribers == 0,
+    "explicit equipment disposal releases the save registration and load callback in the test harness");
+EquippedItemState.Register();
+Check(ModSaveData.ActiveRegistrations == 1 && ModSaveData.LoadedSubscribers == 1,
+    "explicitly disposed equipment registration can be recreated without duplicate callbacks");
 EquippedItemState.Dispose();
 Console.WriteLine($"{passed} regression checks passed. Unity rendering and live Harmony dispatch require in-game testing.");

@@ -25,6 +25,26 @@ keeps the same on-disk format. Other mods can use `SharedArtApi` without CIL.
 CIL's `GlbCacheApi` remains a separate, model-render-cache migration API for
 add-ons; it does not implement or control the shared art library.
 
+## 3.0.6 bootstrap lifecycle fixes
+
+Silverpine destroys the initial BepInEx plugin host while the game continues.
+Item registration completion now uses static scene/startup hooks instead of a
+coroutine on that host. `WhenReady` consumers such as Growables can receive
+the initial registry even after the host is gone. The initial menu has a
+fallback hook for startup without another scene-loaded event.
+
+Equipment-save tracking, equipment-slot retry callbacks, and runtime patches
+remain active for the process. Repeated initialization and ready signals are
+guarded against duplicate registration/notifications. Optional visual failures
+and failing subscribers are logged without blocking other dependent mods.
+Temporary editor and preview objects still release their own resources.
+
+After restarting, look for `Custom item registration complete; dependent mods
+notified.` in the BepInEx log. With Growables installed, also confirm its
+growable-registration message and test planting. Build and 152 headless checks
+pass; live Unity startup, planting, and save/load verification remain required.
+Pack formats and the public API signatures are unchanged.
+
 ## 3.0.5 expanding text fields
 
 Text boxes now explicitly measure their wrapped content at the width used to
@@ -238,7 +258,7 @@ session retains ownership. Pack edits do not hot-replace registered templates.
 
 ## API for crafting frameworks and other mods
 
-Custom Item Loader 3.0.5 exposes a public API in:
+Custom Item Loader 3.0.6 exposes a public API in:
 
 ```csharp
 using SilverpineMods.CustomItemLoader;
@@ -274,7 +294,9 @@ public sealed class MyCraftingPlugin : BaseUnityPlugin
 
 `WhenReady` is the recommended discovery entry point. It runs immediately
 when registration has already finished or runs once when registration
-finishes. Its callback runs on Unity's main thread.
+finishes. Startup notifications run on Unity's main thread. When calling
+`WhenReady` after completion, the callback runs immediately on the calling
+thread, so call it from Unity's main thread when accessing game objects.
 
 ### Stable identifiers
 
@@ -318,7 +340,7 @@ authors can rename them.
 | `CustomItemApi.RenderAndCacheGlbSpriteAsync(...)` | Renders one view and writes the same deterministic distributable PNG/key pair used by CIL items. |
 | `CustomItemApi.WhenReady(callback)` | Race-free initial discovery callback. |
 | `CustomItemApi.ItemRegistered` | Raised after each template enters `ItemLibrary.Items`. |
-| `CustomItemApi.RegistrationCompleted` | Raised after the initial registry pass. |
+| `CustomItemApi.RegistrationCompleted` | Raised once per process after the initial scan and plugin `Awake` registrations. |
 | `CustomItemApi.SpriteReady` | Raised when a deferred GLB render replaces its fallback sprite. |
 | `CustomItemInfo.IsRepairMaterial` | Reports whether the item's `repairMaterial` option extends the repair bench's native ore filter. |
 
@@ -355,9 +377,12 @@ Items that request an unavailable equipment slot are deferred rather than
 rejected. Whenever any provider registers a slot, the loader retries only
 packs blocked by unavailable slots and publishes newly valid items normally.
 This makes a hard-dependent provider safe even though BepInEx loads its
-`Awake` after Custom Item Loader. Registration completion is published from a
-one-frame coroutine after the plugin chain's `Awake` calls; it does not depend
-on Silverpine invoking Unity `Start`.
+`Awake` after Custom Item Loader. Registration completion is published through
+static Unity scene-loaded/startup hooks after the plugin chain's `Awake` calls.
+A `MainMenuUI.Start` fallback handles an already-loaded initial scene; neither
+path requires the BepInEx component, its `Start`, or a surviving coroutine host.
+Notifications occur once per process, not on each new game, load, or scene.
+Slots registered later still trigger retries and `ItemRegistered` events.
 
 The slot registry exposes:
 
