@@ -28,4 +28,16 @@ internal static class EditorFormLayout
 
     internal static float ChoiceHeight(float measuredHeight) =>
         Math.Max(ControlHeight, (float)Math.Ceiling(measuredHeight + 2f));
+
+    internal static float TextInputWidth(float availableWidth, float horizontalMargin, float reservedWidth = 0f) =>
+        Math.Max(1f, availableWidth - horizontalMargin - reservedWidth);
+
+    internal static float TextInputHeight(float measuredHeight, float minimumHeight) =>
+        Math.Max(Math.Max(ControlHeight, minimumHeight), (float)Math.Ceiling(measuredHeight + 2f));
+
+    // Measure a final empty line with a visible glyph. Some native fonts omit
+    // trailing blank lines from CalcHeight; the placeholder is never drawn or saved.
+    internal static string TextMeasurement(string value) =>
+        value.Length == 0 || value.EndsWith("\n", StringComparison.Ordinal) || value.EndsWith("\r", StringComparison.Ordinal)
+            ? value + "M" : value;
 }

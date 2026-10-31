@@ -115,8 +115,14 @@ internal sealed partial class CustomItemEditorUI
 
     private bool DrawActionButton(string text, float minimumWidth = 0f) =>
         GUILayout.Button(text, editorAction!,
-            GUILayout.Width(Mathf.Max(minimumWidth, editorAction!.CalcSize(new GUIContent(text)).x + 12f)),
+            GUILayout.Width(GetActionButtonWidth(text, minimumWidth)),
             GUILayout.MinHeight(44f));
+
+    private float GetActionButtonWidth(string text, float minimumWidth = 0f) =>
+        Mathf.Max(minimumWidth, editorAction!.CalcSize(new GUIContent(text)).x + 12f);
+
+    private float GetActionButtonReservation(string text, float minimumWidth = 0f) =>
+        GetActionButtonWidth(text, minimumWidth) + editorAction!.margin.horizontal;
 
     private void DrawFieldLabel(string text) =>
         GUILayout.Label(text, editorFieldLabel!, GUILayout.MinWidth(0), GUILayout.ExpandWidth(true));
@@ -161,7 +167,8 @@ internal sealed partial class CustomItemEditorUI
             if (DrawFoldout("Pack settings", ref packSettingsOpen))
             {
                 GUILayout.Label("Pack ID");
-                document.Pack.packId = DrawWrappedTextInput(document.Pack.packId ?? "");
+                document.Pack.packId = DrawWrappedTextInput(document.Pack.packId ?? "",
+                    availableWidth: SidebarWidth - 2 * EditorFormLayout.PanelInset);
                 GUILayout.Label("Keep released IDs stable. Save pack to apply changes.", editorMuted!);
             }
         }
@@ -334,7 +341,9 @@ internal sealed partial class CustomItemEditorUI
         if (DrawActionButton("Back to editor", 190)) assetLibraryOpen = false;
         GUILayout.EndHorizontal();
         GUILayout.Label("BepInEx/shared/ArtLibrary · reusable cached views · original object names", editorMuted!);
-        string search = DrawWrappedTextInput(librarySearch);
+        string search = DrawWrappedTextInput(librarySearch,
+            availableWidth: DesignWidth - 2 * EditorFormLayout.OuterInset - SidebarWidth -
+                EditorFormLayout.PanelGap - 2 * EditorFormLayout.PanelInset);
         if (search != librarySearch) { librarySearch = search; libraryPage = 0; ClearLibraryThumbnails(); }
         GUILayout.BeginHorizontal();
         GUI.enabled = !indexingArt;

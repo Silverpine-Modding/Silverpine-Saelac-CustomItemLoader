@@ -25,6 +25,20 @@ keeps the same on-disk format. Other mods can use `SharedArtApi` without CIL.
 CIL's `GlbCacheApi` remains a separate, model-render-cache migration API for
 add-ons; it does not implement or control the shared art library.
 
+## 3.0.5 expanding text fields
+
+Text boxes now explicitly measure their wrapped content at the width used to
+draw them. Descriptions, long names, item references, IDs, search text, and asset
+paths grow downward and move following controls down; removing text shrinks the
+box again. Descriptions preserve manual and trailing blank lines. IDs, names,
+paths, and search fields wrap visually without storing line breaks. Numeric
+fields remain single-line.
+
+Inline fields reserve space for Browse, Change, and Clear before measuring;
+pack settings use the narrower sidebar width. Long selected clone names also
+get a growing value box. This changes editor layout only, not pack data or
+ModTools session ownership. Headless checks do not replace live visual testing.
+
 ## 3.0.4 selector clipping correction
 
 Selectors now measure their text with the same padded style used to draw it.
@@ -224,7 +238,7 @@ session retains ownership. Pack edits do not hot-replace registered templates.
 
 ## API for crafting frameworks and other mods
 
-Custom Item Loader 3.0.4 exposes a public API in:
+Custom Item Loader 3.0.5 exposes a public API in:
 
 ```csharp
 using SilverpineMods.CustomItemLoader;

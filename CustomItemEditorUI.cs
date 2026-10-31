@@ -990,12 +990,13 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
     {
         BeginField("Clone item");
         GUILayout.BeginHorizontal();
-        GUILayout.Label(
+        string cloneAction = clonePickerExpanded ? "Hide browser" : "Change…";
+        DrawWrappedValue(
             string.IsNullOrWhiteSpace(item.clone)
                 ? "(No clone — inert item)"
                 : item.clone!,
-            editorValue!, GUILayout.MinWidth(0), GUILayout.MinHeight(EditorFormLayout.ControlHeight), GUILayout.ExpandWidth(true));
-        if (DrawActionButton(clonePickerExpanded ? "Hide browser" : "Change…", 105))
+            GetActionButtonReservation(cloneAction, 105) + GetActionButtonReservation("Clear", 70));
+        if (DrawActionButton(cloneAction, 105))
             clonePickerExpanded = !clonePickerExpanded;
         GUI.enabled = !string.IsNullOrWhiteSpace(item.clone);
         if (DrawActionButton("Clear", 70))
@@ -1022,7 +1023,8 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
 
         BeginField("Find base item");
         GUILayout.BeginHorizontal();
-        cloneSearch = DrawWrappedTextInput(cloneSearch);
+        cloneSearch = DrawWrappedTextInput(cloneSearch,
+            reservedWidth: GetActionButtonReservation("×", 32));
         if (DrawActionButton("×", 32))
             cloneSearch = "";
         GUILayout.EndHorizontal();
@@ -1449,7 +1451,8 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
     {
         BeginField(label);
         GUILayout.BeginHorizontal();
-        string next = DrawWrappedTextInput(value);
+        string next = DrawWrappedTextInput(value,
+            reservedWidth: GetActionButtonReservation("Browse", 75));
         if (next != value)
             assign(next);
         if (DrawActionButton("Browse", 75))
@@ -1715,50 +1718,41 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
         string value,
         bool allowLineBreaks = false,
         float minimumHeight = 0f,
-        float minimumWidth = 0f)
+        float? availableWidth = null,
+        float reservedWidth = 0f)
     {
         wrappedTextAreaStyle ??= new GUIStyle(GUI.skin.textArea)
         {
             wordWrap = true,
-            stretchWidth = true,
+            stretchWidth = false,
+            stretchHeight = false,
             fixedWidth = 0f,
             fixedHeight = 0f,
+            alignment = TextAnchor.UpperLeft,
+            contentOffset = Vector2.zero,
             clipping = TextClipping.Clip
         };
 
-        string next;
-        if (minimumHeight > 0f)
-        {
-            next = GUILayout.TextArea(
-                value,
-                wrappedTextAreaStyle,
-                GUILayout.MinWidth(0),
-                GUILayout.MinHeight(minimumHeight),
-                GUILayout.ExpandWidth(true),
-                GUILayout.ExpandHeight(false));
-        }
-        else if (minimumWidth > 0f)
-        {
-            next = GUILayout.TextArea(
-                value,
-                wrappedTextAreaStyle,
-                GUILayout.MinWidth(minimumWidth),
-                GUILayout.ExpandWidth(true),
-                GUILayout.ExpandHeight(false));
-        }
-        else
-        {
-            next = GUILayout.TextArea(
-                value,
-                wrappedTextAreaStyle,
-                GUILayout.ExpandWidth(true),
-                GUILayout.MinWidth(0),
-                GUILayout.ExpandHeight(false));
-        }
+        // Reserve adjacent actions before measuring. The same width and style
+        // are then used for painting, so every wrapped line fits in the box.
+        GUIStyle style = wrappedTextAreaStyle;
+        float width = EditorFormLayout.TextInputWidth(availableWidth ?? formWidth, style.margin.horizontal, reservedWidth);
+        float height = EditorFormLayout.TextInputHeight(
+            style.CalcHeight(new GUIContent(EditorFormLayout.TextMeasurement(value)), width), minimumHeight);
+        string next = GUILayout.TextArea(value, style, GUILayout.Width(width), GUILayout.Height(height));
 
         if (!allowLineBreaks)
             next = next.Replace("\r", "").Replace("\n", "");
         return next;
+    }
+
+    private void DrawWrappedValue(string value, float reservedWidth)
+    {
+        GUIStyle style = editorValue!;
+        float width = EditorFormLayout.TextInputWidth(formWidth, style.margin.horizontal, reservedWidth);
+        GUIContent content = new(value);
+        float height = EditorFormLayout.TextInputHeight(style.CalcHeight(content, width), 0f);
+        GUILayout.Label(content, style, GUILayout.Width(width), GUILayout.Height(height));
     }
 
     private void DrawChoice(

@@ -26,12 +26,27 @@ Check(!EditorFormLayout.UseColumns(623) && EditorFormLayout.UseColumns(624), "na
 Check(EditorFormLayout.ChoiceHeight(38) == 44, "single-line selector values retain the standard control height");
 Check(EditorFormLayout.ChoiceHeight(61.3f) == 64, "wrapped selector height includes all measured lines and rounding slack");
 Check(EditorFormLayout.ChoiceHeight(110) == 112, "long addon selectors are not clipped to a one-line height");
+Check(EditorFormLayout.TextInputHeight(38, 0) == 44, "short text inputs retain a usable single-line minimum");
+Check(EditorFormLayout.TextInputHeight(38, 70) == 70, "description inputs retain their multiline minimum");
+Check(EditorFormLayout.TextInputHeight(105.3f, 70) == 108, "wrapped text expands beyond the description minimum with rounding slack");
+Check(EditorFormLayout.TextInputHeight(600, 70) == 602, "long descriptions are not capped to a one-line or fixed-height box");
+Check(EditorFormLayout.TextInputHeight(60, 70) < EditorFormLayout.TextInputHeight(160, 70), "text boxes shrink again when text is removed");
+Check(EditorFormLayout.TextMeasurement("") == "M", "empty inputs still measure one font line");
+Check(EditorFormLayout.TextMeasurement("First line\n\n") == "First line\n\nM", "trailing blank lines are included in multiline height measurement");
+Check(EditorFormLayout.TextMeasurement("First line\r\n") == "First line\r\nM", "pasted Windows line endings retain a measurable final line");
+Check(EditorFormLayout.TextMeasurement("Ordinary text") == "Ordinary text", "nonempty lines are measured without extra wrapping characters");
 foreach (float width in new[] { 300f, columnWidth, EditorFormLayout.ContentWidth })
 {
     float choiceWidth = EditorFormLayout.ChoiceWidth(width, 2000, 56);
     Check(choiceWidth + 112 + EditorFormLayout.ChoiceSpacing <= width && choiceWidth >= 0,
         "long choice names stay inside their field width " + width);
+    float inputWidth = EditorFormLayout.TextInputWidth(width, 8, 120);
+    Check(inputWidth + 8 + 120 == width && inputWidth > 0,
+        "wrapped input reserves margins and adjacent buttons within width " + width);
 }
+Check(EditorFormLayout.TextInputWidth(EditorFormLayout.SidebarWidth - 2 * EditorFormLayout.PanelInset, 8) == 296,
+    "pack ID input uses the sidebar width rather than the details panel width");
+Check(EditorFormLayout.TextInputWidth(20, 8, 120) == 1, "text measurement width remains positive for exhausted rows");
 foreach (var screen in new[] { (1280, 720), (1920, 1080), (2560, 1080), (3636, 2037) })
 {
     double scale = Math.Min(screen.Item1 / 1920d, screen.Item2 / 1080d);
@@ -347,8 +362,28 @@ if (args.Length == 1)
     var editor = pluginAssembly.MainModule.Types.Single(t => t.Name == "CustomItemEditorUI");
     bool Calls(MethodDefinition method, string target) => method.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == target);
     var actionButton = editor.Methods.Single(m => m.Name == "DrawActionButton");
-    Check(Calls(actionButton, "CalcSize") && Calls(actionButton, "Width") && Calls(actionButton, "MinHeight"),
+    Check(Calls(actionButton, "GetActionButtonWidth") && Calls(editor.Methods.Single(m => m.Name == "GetActionButtonWidth"), "CalcSize") &&
+        Calls(actionButton, "Width") && Calls(actionButton, "MinHeight"),
         "short editor actions measure their text and reserve sufficient control height");
+    var wrappedInput = editor.Methods.Single(m => m.Name == "DrawWrappedTextInput");
+    Check(Calls(wrappedInput, "CalcHeight") && Calls(wrappedInput, "TextInputWidth") && Calls(wrappedInput, "TextInputHeight") &&
+        Calls(wrappedInput, "TextMeasurement") && Calls(wrappedInput, "Width") && Calls(wrappedInput, "Height") && Calls(wrappedInput, "TextArea"),
+        "wrapped text inputs measure their bounded width and assign an explicit growing height");
+    Check(Calls(wrappedInput, "set_alignment") && Calls(wrappedInput, "set_contentOffset") &&
+        Calls(wrappedInput, "set_fixedHeight") && Calls(wrappedInput, "set_stretchHeight"),
+        "multiline inputs clear native one-line sizing and align text at the top");
+    Check(new[] { "DrawAssetPath", "DrawCloneChoice" }.All(name =>
+        Calls(editor.Methods.Single(m => m.Name == name), "GetActionButtonReservation")) &&
+        Calls(editor.Methods.Single(m => m.Name == "GetActionButtonReservation"), "GetActionButtonWidth"),
+        "inline text fields reserve the same measured widths used by their adjacent actions");
+    var wrappedValue = editor.Methods.Single(m => m.Name == "DrawWrappedValue");
+    Check(Calls(editor.Methods.Single(m => m.Name == "DrawCloneChoice"), "DrawWrappedValue") &&
+        Calls(wrappedValue, "CalcHeight") && Calls(wrappedValue, "Height"),
+        "long selected clone names also expand their value boxes");
+    Check(new[] { "DrawInt", "DrawFloatInline" }.All(name =>
+        Calls(editor.Methods.Single(m => m.Name == name), "TextField") &&
+        !Calls(editor.Methods.Single(m => m.Name == name), "DrawWrappedTextInput")),
+        "numeric fields remain single-line controls rather than multiline text areas");
     var fieldLabel = editor.Methods.Single(m => m.Name == "DrawFieldLabel");
     Check(Calls(fieldLabel, "MinWidth") && !Calls(fieldLabel, "Width"),
         "field labels wrap above controls without reserving a competing horizontal column");

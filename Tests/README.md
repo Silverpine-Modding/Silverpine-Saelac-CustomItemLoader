@@ -22,7 +22,7 @@ per-view offset and shared-library code is also exercised: independent/reset
 directions, JSON duplication, finite/bounded offsets, pivot math, art deduplication,
 original GLB names, invalid manifests, and GLB-free pack copies.
 
-Editor smoke checks for 3.0.4: open through Modding Tools; exercise all four
+Editor smoke checks for 3.0.5: open through Modding Tools; exercise all four
 tabs and the native file picker; drag Front and Back to different positions,
 save/restart, rotate the placement cursor and placed furniture; confirm offsets
 match. Repeat with a single PNG, cached four-view art with its GLB absent,
@@ -31,7 +31,7 @@ and inherited base-game visuals. Check 1280×720 and 1920×1080 layouts.
 These are not live Unity integration tests. Before publishing, smoke-test a
 backup save in game:
 
-The 3.0.4 run includes 111 checks with the game-directory argument. Layout
+The 3.0.5 run includes 130 checks with the game-directory argument. Layout
 budgets and binary guards verify bounded columns, stacked field labels,
 text-measured action buttons, selector width/height measured with the drawing
 style, and a Refresh preview button outside the scroll area. They do not
@@ -39,6 +39,14 @@ inspect rendered pixels. Confirm Save Pack, Change, Clear, Browse, arrows,
 Miscellaneous, Automatic, and long add-on slot names stay readable at
 1280×720 and 1920×1080. Live Unity verification remains outstanding for this
 build; passing these checks is not a substitute for that smoke test.
+
+Text-input checks cover bounded width, adjacent button reservations, explicit
+content height, trailing blank lines, shrinking after deletion, and single-line
+numeric controls. In game, paste several paragraphs into Description, add empty
+lines at the end, then delete most of the text. Confirm the box grows/shrinks and
+pushes the next section down without overlap. Repeat with a long display name,
+unbroken asset path next to Browse, clone search next to Clear, and the Pack ID
+in the sidebar. Paths and IDs must only wrap visually, with no stored newlines.
 
 1. Equip/unequip armor that crosses 254, save/reload, then unequip. Repeat with
    a resistance effect expiring and with multiple armor contributions.
