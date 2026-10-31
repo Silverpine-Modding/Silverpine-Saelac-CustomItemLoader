@@ -242,9 +242,10 @@ public static class CustomAttributeModifierApi
     {
         if (item == null || string.IsNullOrWhiteSpace(item.spriteName))
             return 0f;
-        if (!Plugin.AttributeModifiers.TryGetValue(
+        AttributeModifiersDefinition? definition = EquippedItemState.Get(item)?.Basic;
+        if (definition == null && !Plugin.AttributeModifiers.TryGetValue(
                 item.spriteName,
-                out AttributeModifiersDefinition definition))
+                out definition))
             return 0f;
         CustomAttributeModifierField? field = TryGetField(id);
         if (field == null || !field.Supports(GetItemKinds(item)))
@@ -350,58 +351,14 @@ public sealed class CustomAttributeModifierField
     }
 }
 
-internal static class BasicAttributeModifierRuntime
-{
-    internal static void Apply(Item item, int direction)
-    {
-        Player? player = Player.Instance;
-        if (player == null ||
-            string.IsNullOrWhiteSpace(item.spriteName) ||
-            !Plugin.AttributeModifiers.TryGetValue(
-                item.spriteName,
-                out AttributeModifiersDefinition values))
-            return;
-
-        player.damagable.MaxHP += direction * values.maxHealth;
-        player.energy.ChangeMax(direction * values.maxEnergy);
-        player.worldInventory.inventory.maxBulk +=
-            direction * values.carryCapacity;
-        player.damagable.armorValues[DamageType.Normal] +=
-            direction * values.normalArmor;
-        player.damagable.armorValues[DamageType.Fire] +=
-            direction * values.fireArmor;
-        player.damagable.armorValues[DamageType.Frost] +=
-            direction * values.frostArmor;
-        player.worldInventory.inventory.UpdateEncumbered();
-        if (InventoryUI.Instance != null)
-            InventoryUI.Instance.UpdateBulkBar();
-    }
-}
-
-[HarmonyPatch(typeof(Item), nameof(Item.OnEquipped))]
-internal static class CustomItemAttributeEquippedPatch
-{
-    private static void Postfix(Item __instance) =>
-        BasicAttributeModifierRuntime.Apply(__instance, 1);
-}
-
-[HarmonyPatch(typeof(Item), nameof(Item.OnUnequipped))]
-internal static class CustomItemAttributeUnequippedPatch
-{
-    private static void Postfix(Item __instance) =>
-        BasicAttributeModifierRuntime.Apply(__instance, -1);
-}
-
 [HarmonyPatch(typeof(Item), nameof(Item.GetFinalDescription))]
 internal static class CustomItemAttributeDescriptionPatch
 {
     private static void Postfix(Item __instance, ref string __result)
     {
-        if (string.IsNullOrWhiteSpace(__instance.spriteName) ||
-            !Plugin.AttributeModifiers.TryGetValue(
-                __instance.spriteName,
-                out AttributeModifiersDefinition values))
-            return;
+        if (string.IsNullOrWhiteSpace(__instance.spriteName)) return;
+        AttributeModifiersDefinition? values = EquippedItemState.Get(__instance)?.Basic;
+        if (values == null && !Plugin.AttributeModifiers.TryGetValue(__instance.spriteName, out values)) return;
         string addition = values.GetDescription(__instance);
         if (string.IsNullOrWhiteSpace(addition))
             return;

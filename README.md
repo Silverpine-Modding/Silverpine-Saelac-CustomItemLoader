@@ -9,118 +9,222 @@ BepInEx/config/CustomItemLoader
 
 Each pack is a JSON file accompanied by its PNG/JPG/JPEG assets and generated
 GLB cache PNGs. Source GLBs live in the shared
-`BepInEx/config/CustomItemLoaderModels` authoring library outside the packs.
+`BepInEx/shared/ArtLibrary/models` authoring library outside the packs.
 
 ## Requirements
 
 - BepInEx for Silverpine 1.7.3
-- Silverpine Modding Tools 1.4.0 or newer
+- Silverpine Modding Tools 1.13.0 or newer
 
 Modding Tools supplies the shared Newtonsoft.Json 13.0.3 assembly. Do not place
 another `Newtonsoft.Json.dll` in the CustomItemLoader folder.
 
-## In-game Custom Item Editor
+The shared art catalog is now provided by Modding Tools, not owned by CIL.
+The existing editor uses the framework's `SharedArtLibrary` implementation and
+keeps the same on-disk format. Other mods can use `SharedArtApi` without CIL.
+CIL's `GlbCacheApi` remains a separate, model-render-cache migration API for
+add-ons; it does not implement or control the shared art library.
 
-From Silverpine's main menu:
+## 3.0.4 selector clipping correction
 
-1. Open `Modding Tools`.
-2. Choose `Custom Item Editor`.
-3. Create a pack or select an existing JSON pack.
-4. Use `Enable` or `Disable` to control whether the selected pack registers at
-   startup, then add or duplicate items.
-5. Expand `Prefab inheritance`, open its base-item browser, and choose inherited
-   behavior.
-6. Choose whether the equipment slot is inherited, overridden with a base-game
-   slot, disabled, or supplied by an installed slot-provider mod.
-7. Optionally expand `Inherited component overrides` and enable the prefab
-   component groups you want to tune.
-8. Choose `Base Item` to reuse the clone's native visuals without an asset,
-   or choose `Image`/`GLB Model` and use `Browse` to import a custom asset.
-9. For a GLB, adjust rotation, zoom, and resolution. Turnable generated
-   furniture also exposes Right, Back, and Left yaw offsets; choose
-   `Render GLB Preview` to render all four views.
-10. To make the item custom furniture, choose `GeneratedPrefab`, then configure
-    its movement blocking, rotation, bed, workbench, and light options.
-11. Under `Game values`, choose whether the market board and crate should use
-    Silverpine's automatic herb/ore rule, always include the item, or exclude
-    it. Enable `Repair material` when this item should be accepted by the
-    repair bench even though its name does not contain `ore`.
-12. Select `Save Pack`.
-13. Restart Silverpine to register the saved changes.
+Selectors now measure their text with the same padded style used to draw it.
+This corrects the last-character wrapping seen in values such as
+`Miscellaneous` and `Automatic`. Native fixed text-area dimensions are cleared;
+long add-on slot names get an explicitly measured multiline height within the
+existing width limit. Refresh preview remains below the preview scroll area
+instead of scrolling out of view. Live Unity visual verification is still
+required; headless layout checks do not verify font rasterization.
 
-The editor uses a three-panel main-menu layout modeled after Silverpine's
-character-content editor: packs on the left, items in the center, and
-task-oriented collapsible groups on the right. The groups are `Identity`,
-`Prefab inheritance`, `World placement and interaction`, `Game values`, and
-`Appearance`. Related compact fields use separated two-column rows. The
-base-item browser and large preview canvases have independent nested foldouts.
-Text inputs wrap to their available panel or column width and grow downward,
-so long names, identifiers, paths, and values push later controls down instead
-of widening the editor beyond the screen.
+## 3.0.3 form layout
 
-The appearance section shows two previews:
+Compact fields now use equal, bounded columns with their labels above the
+controls. Each setting's help text sits beneath that setting, never beside a
+different field. This prevents long market/repair explanations from squeezing
+the adjacent selector or splitting Enabled/Disabled across lines.
 
-- `Inventory icon` displays the inherited base-item visual, supplied image,
-  or newly rendered GLB icon.
-- `Placement mode` displays the exact sprite branch Silverpine will use. In
-  `Sprite` mode this includes `WorldItem`'s half-resolution downsampling and
-  the configured placed-sprite scale. In `GeneratedPrefab` mode it shows the
-  full custom sprite and generated-furniture interactions. In `ClonedPrefab`
-  mode it shows the original pickupable prefab appearance. Turnable furniture
-  has a Front/Right/Back/Left view selector. The item and one-tile grass square
-  are drawn with one shared world-space scale: the grass is exactly 1 × 1 tile,
-  and the item size is calculated from its pixels-per-unit and placement scale.
+Section headings are left-aligned, fields have consistent vertical spacing,
+and the three main panels have explicit gutters. Choice arrows remain grouped
+around the selected value. Descriptions and long asset paths still wrap;
+numeric inputs remain single-line. The layout reserves scrollbar space and
+stacks paired fields if their available logical width is too small.
 
-The editor supports:
+This is an editor-only layout update: pack data, item behavior, shared art,
+preview scale/offsets and ModTools session ownership are unchanged. Build and
+layout-budget checks are headless, not a substitute for live Unity visual QA.
 
-- Creating and editing packs
-- Adding, duplicating, and removing items
-- Searchable base-item clone selection
-- Optional native visual inheritance from the selected clone, including its
-  normal static icon or base-game 3D inventory display
-- Inherited, base-game, disabled, and mod-registered equipment-slot selection
-- Category, sound, value, bulk, market and repair-material participation, placement,
-  placed-sprite scale, workbench interaction, and lantern-style area-light
-  controls
-- Generated furniture prefabs with directional image or GLB rotation sprites,
-  collision, wall-placement, snapping, native bed behavior, and persistent
-  custom-item pickup identity
-- Conditional inherited-component overrides for food, weapons, armor defense,
-  durability, fuel, expiration, cooking results, and potion potency
-- Equipped armor/clothing/weapon modifiers for maximum health, maximum energy, carry
-  capacity, and Normal/Fire/Frost armor
-- Automatic optional Attribute Expansion discovery, with its calculation-point
-  fields shown in the same collapsible category when installed
-- Compact arrow selectors that keep both arrows beside their current value,
-  with related smaller controls arranged into separated two-column rows
-- PNG/JPG/JPEG and GLB asset importing
-- Live GLB rendering with separate inventory and placement-mode previews
-- Live, smoothly rotating custom GLB models in Silverpine's inventory detail
-  panel
-- Full schema and asset validation before saving
-- Atomic JSON saves through a temporary file
+## 3.0.2 editor spacing
 
-While the native Silverpine file picker is open, the item editor temporarily
-stops drawing and handling Escape. This keeps `GenericListUI` in front while
-the existing Modding Tools session continues to own main-menu navigation.
+Short action buttons (including Save Pack, Change, Clear, and Browse) measure
+their text and stay on one line. Field-label columns, the sidebar, and preview
+have more width. Numeric inputs stay single-line; descriptions, help, and long
+names retain multiline layout. Tabs have sufficient height for the themed font.
+Growables 1.7.2 uses the same correction. Build/regression checks are headless;
+live layout at different resolutions still needs checking.
 
-The GUI does not silently hot-replace registered templates. Restarting after
-save ensures that item-library and saved-game references are initialized in
-the same deterministic order.
+## 3.0.1 review fixes
 
-Unknown item-level JSON fields are preserved when the editor loads and saves
-a pack. This lets behavior add-ons such as Custom Growables own an extension
-block without Custom Item Loader interpreting or deleting it.
+- Pack saves use atomic replacement and keep the previous file as `items.json.bak`
+  (or `<original filename>.bak`). New packs cannot overwrite an existing file.
+  If another tool edits the file while the editor is open, saving is refused
+  and the in-memory edits remain available for reconciliation.
+- Saving one pack preserves edits in other open packs. New unsaved packs remain
+  selectable. Closing with unsaved edits asks before discarding them.
+- Escape is handled by the Modding Tools session: it cancels the picker or
+  placement drag, returns from the asset library, or requests editor closure.
+- Unchanged numeric controls no longer regenerate placement textures every GUI
+  pass. Asset indexing runs between frames, and failed image imports release
+  their temporary Unity textures. Image imports use Modding Tools' shared API.
+- GLB items retain the same world size with or without their source GLB,
+  including inherited custom GLB visuals. Live inventory spin still requires
+  the source model. Duplicating a cache-only item copies its cached views and
+  render keys to a unique item ID.
+- Solid-color GLB materials no longer borrow an unrelated material's texture.
+  Renderer cache version 13 re-renders available source models as needed.
+  Cache-only packs retain their supplied art; re-render at the author's end to
+  replace artwork baked by an older renderer.
+- Generated furniture uses collision-safe prefab names. Legacy save names are
+  registered as Modding Tools aliases. In the formerly ambiguous case, the
+  first registered item keeps the legacy alias; both new identities can load.
+  Current light settings are applied after native deserialization, including
+  removal of a saved light that the pack now disables.
+- Zero-price custom items no longer divide by zero when enchanted. Their price
+  remains zero; priced items and base-game items keep native valuation.
+- Excluding an item from the market returns any unsold stock to its crate.
+  If the crate is full, the remaining stock is preserved and retried at the
+  next market sale check after space becomes available.
 
-For an item with an explicit `equipmentSlot`, the inventory description's
-`Slot:` line uses the registered slot display name. This replaces a cloned
-clothing item's inherited slot label (for example, `Ring`) and also adds the
-line when the selected clone does not normally produce one. This display-only
-normalization does not alter the separate equipment text supplied to the LLM.
+No pack definitions, source models, artwork, or save files are rewritten during
+installation. Restart Silverpine to load the updated plugin. Headless regression
+checks cover these safeguards; live Unity UI/rendering still requires an in-game
+check.
+
+## 2.9.2 safety update
+
+- Equipped custom items remember the modifiers and clothing defenses actually
+  applied. Modding Tools stores these snapshots in the save's `.moddingtools`
+  companion. Keep that file with its native save when copying or backing up saves.
+  Editing a pack does not retroactively change equipped contributions: unequip
+  and re-equip to adopt the new values. Descriptions and extension modifiers use
+  the same equipped snapshot.
+- Saved equipment is relinked to its current slot after the game's delayed load.
+  An unchanged occupant wins a slot conflict; displaced or newly non-equipable
+  items are unequipped, with their contributions removed, and remain in inventory.
+- Older saves without snapshots assume the current pack values were applied and
+  log that assumption. This cannot reconstruct stats already lost by an older
+  version. Keep backups before changing packs on an older save.
+- Image imports use full content hashes and never overwrite a different asset
+  just because its source filename matches. Identical image bytes are reused.
+- Ranged ammunition is checked after registration, including forward references.
+  Missing, uncharged, or incompatible ammunition safely blocks use instead of
+  entering the native null-dereference path.
+- New GLB cache filenames distinguish pack, item and rotation/addon variant.
+  Unambiguous legacy caches still load; an ambiguous legacy filename requires
+  re-rendering the affected items from their source GLBs.
+- GLB preview rendering snapshots the selected item and settings. Switching
+  selection, closing/clearing the preview, or editing the definition discards
+  the pending result instead of publishing it into another item or cache.
+
+For the non-destructive 254 armor cap, also update Attribute Expansion to 1.3.1.
+No existing pack assets or save files are migrated or deleted at install time.
+
+## 3.0.0 tabbed editor and shared art library
+
+Open **Modding Tools → Custom Item Editor** from the main menu. The editor
+remains a framework-owned `ModToolBehaviour` session: no replacement game
+menu, native game files, additional Newtonsoft installation, or browser is
+required.
+
+- The left sidebar combines the pack picker, startup toggle, pack settings,
+  and item list. Add, duplicate, and remove items here.
+- **Item** contains identity, description, clone selection, equipment slot,
+  category, sound, value, bulk, market participation, and repair material.
+- **Appearance** contains Base Item, Image, GLB Model, and Cached art sources,
+  render controls, directional images/angles, and library publishing.
+- **Placement** contains placement mode, scale, snapping, turnable furniture,
+  collision, bed, workbench, wall-placement and light adapters.
+- **Gameplay** retains conditional prefab component overrides and equipped
+  attribute modifiers, including optional Attribute Expansion fields.
+- The right-side preview stays visible across all four tabs. Switch between
+  Inventory and World; grass and art share one world-space display scale.
+  Long text wraps downward and the field panel scrolls independently.
+
+### Direct per-view placement editing
+
+In the World preview, drag the sprite relative to the red cursor dot. Each
+Front/Right/Back/Left view has its own offset. Reset affects only the displayed
+view. Click the art to focus it, then use arrow keys for 0.01-tile adjustments
+or Shift+arrows for 0.1 tiles. Escape cancels an active drag.
+
+Offsets are measured in world tiles, independent of render resolution and
+placement scale. Positive X moves right; positive Y moves up. The dot marks
+the actual sprite placement pivot, not an assumed bottom-center anchor.
+Generated furniture uses the same adjusted directional sprites in its native
+placement cursor and in the world. Static sprite items use Front. ClonedPrefab
+keeps its native appearance and placement, so custom offset editing is disabled.
+
+Save the pack and restart Silverpine to apply edits to registered items.
+Existing packs without offsets retain their original placement. Offsets do
+not modify the inventory icon, cached PNGs, tile snapping, light position, or
+the object's world transform; generated furniture hit bounds follow the art.
+
+```json
+"placementOffsets": {
+  "front": { "x": 0.15, "y": 0.0 },
+  "right": { "x": 0.0, "y": 0.0 },
+  "back":  { "x": -0.15, "y": 0.05 },
+  "left":  { "x": 0.0, "y": 0.0 }
+}
+```
+
+### Universal asset library
+
+The **Asset library** button opens reusable cached artwork with thumbnails,
+search, original object names, and view counts. On first open, existing pack
+art is indexed when the library is empty. **Index existing pack art** can be
+run again; missing sources are skipped and logged. Rendering a GLB also
+publishes its generated art. **Add current art** publishes existing images
+without changing the pack.
+
+The library is shared across mods, not partitioned by pack ID:
+
+```text
+BepInEx/shared/ArtLibrary/
+├── entries/<asset-sha256>.json
+├── images/<image-sha256>.png
+└── models/<readable-name>__<content-hash>.glb
+```
+
+**Use cached art** copies the selected images into the current pack's assets
+folder and selects them as ordinary images. Four-view assets retain their
+directional art for turnable generated furniture. Consumers need neither the
+source GLB nor the author's shared library; distribute the JSON and its
+pack-local images. Cached-art inventory displays are static; use the GLB
+source option to retain live inventory spin.
+
+Manifest version 1 is intentionally plain JSON for other mods. Its fields
+are `version`, `id`, `originalName`, `sourceFileName`, optional
+`modelSha256`, `views`, and `pixelsPerUnit` (32). `views` contains one
+Front image or Front/Right/Back/Left, in that order, with paths relative to
+the library. Image filenames use full SHA-256 of their PNG bytes. The entry
+ID is SHA-256 of UTF-8 `art-v1|32|` followed by the ordered view paths joined
+with `|`. Identical renders are reused across items; different render
+variants remain separate. Model hashes, when present, cover the GLB bytes.
+Placement offsets belong to items, never shared assets.
+
+New GLBs are imported outside packs into the universal models folder.
+Legacy `BepInEx/config/CustomItemLoaderModels` and existing pack-relative
+GLBs remain readable and are not moved or deleted automatically. Other
+plugins using the model-list API continue to see both model locations.
+The library does not silently rewrite other mods' storage configuration.
+
+All existing save-time item/asset validation, addon JSON fields, optional
+equipment-slot providers, and asynchronous stale-render guards remain.
+The native file picker temporarily hides the editor while the Modding Tools
+session retains ownership. Pack edits do not hot-replace registered templates.
 
 ## API for crafting frameworks and other mods
 
-Custom Item Loader 2.9.1 exposes a public API in:
+Custom Item Loader 3.0.4 exposes a public API in:
 
 ```csharp
 using SilverpineMods.CustomItemLoader;
@@ -336,21 +440,20 @@ and refresh the affected entry.
 ## Folder layout
 
 ```text
-BepInEx/config/
-├── CustomItemLoader/
-│   └── ExamplePack/
-│       ├── items.json
-│       ├── .cache/
-│       │   └── example.mypack__iron_mug.png
-│       └── images/
-│           └── painted_rock.png
-└── CustomItemLoaderModels/
-    └── medieval_iron_mug__a1b2c3d4e5f60718.glb
+BepInEx/
+├── config/CustomItemLoader/ExamplePack/
+│   ├── items.json
+│   ├── .cache/v2-<identity-sha256>.png
+│   └── assets/<image-sha256>.png
+└── shared/ArtLibrary/
+    ├── entries/<asset-sha256>.json
+    ├── images/<image-sha256>.png
+    └── models/medieval_iron_mug__a1b2c3d4e5f60718.glb
 ```
 
 Any folder structure beneath `CustomItemLoader` is allowed. Every file ending
-in `.json` is treated as an item pack. `CustomItemLoaderModels` is a shared
-author-only library outside every pack and should not be distributed. The
+in `.json` is treated as an item pack. The shared art/model library is
+outside every pack and is not required by distributed cached-art packs. The
 `.cache` directory is part of a distributed cache-only GLB pack and must not be
 discarded.
 
@@ -444,7 +547,7 @@ style value such as `author.packname` is recommended.
 | `name` | string | Yes | — | In-game display and lookup name. It must be globally unique, ignoring case. |
 | `description` | string | No | `""` | Text shown in the item description. |
 | `image` | string | Conditional | — | Relative path to a PNG, JPG, or JPEG icon. |
-| `model` | string | Conditional | — | Relative reference inside the shared `BepInEx/config/CustomItemLoaderModels` authoring library. The library is not part of distributed packs; consumers use the required `.cache` PNGs. |
+| `model` | string | Conditional | — | Relative reference inside `BepInEx/shared/ArtLibrary/models`; the legacy authoring library remains readable. Consumers can use the required pack-local `.cache` PNGs without the GLB. |
 | `clone` | string | No | — | Exact base-game item name whose gameplay components are copied. |
 | `useCloneVisuals` | boolean | No | `false` | When `true`, reuses the selected clone's native icon and base-game 3D inventory display instead of requiring `image` or `model`. Requires `clone`. |
 | `equipmentSlot` | string | No | Inherited | Registered equipment-slot ID. Omit it to inherit the clone's slot. |
@@ -600,8 +703,10 @@ If the object has multiple actions—such as `Take`, `Sleep`, `Rotate`, and
 `Use Cooking`—Silverpine presents them through its normal radial interaction
 menu. Picking the furniture back up returns the exact custom item, not a newly
 generated base-style item. Its stable prefab identity is
-`cil_generated_furniture__<packId>__<item-id>`, so do not change `packId` or
-the item `id` after releasing a pack. Loading a save containing the furniture
+`cil_generated_furniture__v2_<identity-hash>`, derived from the separate pack
+and item IDs. Older `cil_generated_furniture__<packId>__<item-id>` names resolve
+through save aliases. Do not change `packId` or the item `id` after releasing
+a pack. Loading a save containing the furniture
 also requires the plugin and that item pack to remain installed.
 
 Version 2.2.4 and newer register generated furniture through Modding Tools'
@@ -698,6 +803,11 @@ Damage, energy, fuel, and expiration limits must be non-negative, with
 from `0` through `1`. `ammunitionItem` and `resultItem` are exact registered
 item display names. Enabling a durability override also starts newly created
 items at the new maximum durability.
+
+`ammunitionItem` must refer to an item with `ItemComponent_Charges`, such as a
+quiver, rather than an ordinary loose item. The editor validates local pack
+definitions as well as registered templates. Runtime validation runs after
+registration so a valid ammo item can be defined later in the pack list.
 
 An armor-bearing clothing clone can replace the tier-derived defenses:
 
@@ -838,12 +948,19 @@ from silently falling back to white or grayscale.
 The transparent inventory render is cropped and cached at:
 
 ```text
-<pack folder>/.cache/<pack-id>__<item-id>.png
+<pack folder>/.cache/v2-<identity-sha256>.png
 ```
 
-The cache key includes the GLB contents, `rotation`, `zoom`, `resolution`, and
-the renderer version. Changing any of these regenerates the thumbnail. Delete
-`.cache` to force all thumbnails in a pack to regenerate.
+The filename hashes a length-delimited tuple of pack ID, item ID, and view/addon
+suffix. Its `.key` sidecar includes the GLB contents, `rotation`, `zoom`,
+`resolution`, and renderer version. Changing these regenerates the thumbnail
+when the source GLB is available. Do not delete `.cache` from a cache-only pack;
+it contains that pack's only distributable GLB visuals.
+
+Legacy `<pack-id>__<item-id>[__furniture_direction].png` files remain readable
+when the name has a single owner. New renders write only v2 names and leave the
+old files untouched. Use the public cache-path/load APIs rather than constructing
+filenames in an addon.
 
 #### Distributing GLB items without the source model
 
@@ -877,13 +994,9 @@ preview, market, and furniture systems. Their live 3D inventory spin is disabled
 because reconstructing the original geometry from a rendered image is not
 lossless; source-bearing authoring packs retain the full smooth GLB spin.
 
-Turnable generated furniture adds three independently keyed caches:
-
-```text
-<pack-id>__<item-id>__furniture_right.png
-<pack-id>__<item-id>__furniture_back.png
-<pack-id>__<item-id>__furniture_left.png
-```
+Turnable generated furniture adds three independently keyed v2 caches, using
+the variant identities `__furniture_right`, `__furniture_back`, and
+`__furniture_left`. A matching item ID cannot collide with a rotation variant.
 
 They use the identical GLB scene/material pipeline. Until an uncached
 direction finishes rendering, that direction safely displays the Front sprite.

@@ -24,20 +24,26 @@ namespace SilverpineMods.CustomItemLoader;
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 [BepInDependency(
     Silverpine.ModdingTools.Plugin.PluginGuid,
-    "1.4.0")]
+    "1.13.0")]
 public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "renegadex.silverpine.customitemloader";
     public const string PluginName = "Custom Item Loader";
-    public const string PluginVersion = "2.9.1";
+    public const string PluginVersion = "3.0.4";
 
     internal static ManualLogSource Log = null!;
     internal static readonly Dictionary<string, Sprite> CustomSprites =
         new(StringComparer.OrdinalIgnoreCase);
     internal static readonly Dictionary<string, Item> InheritedVisualSources =
         new(StringComparer.OrdinalIgnoreCase);
+    internal static readonly HashSet<string> GlbVisualSpriteKeys =
+        new(StringComparer.OrdinalIgnoreCase);
     internal static readonly Dictionary<string, float> PlacementScales =
         new(StringComparer.OrdinalIgnoreCase);
+    internal static readonly Dictionary<string, PlacementOffsets> PlacementOffsetsByItem =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<int> TransformedPlacementSprites = new();
+    private static readonly Dictionary<int, Sprite> CursorSourceSprites = new();
     internal static readonly Dictionary<string, CustomItemWorkbenchType>
         WorkbenchTypes = new(StringComparer.OrdinalIgnoreCase);
     internal static readonly Dictionary<string, LightDefinition?> LightSettings =
@@ -92,10 +98,9 @@ public sealed class Plugin : BaseUnityPlugin
     private void Awake()
     {
         Log = Logger;
+        EquippedItemState.Register();
         DefinitionDirectory = Path.Combine(Paths.ConfigPath, "CustomItemLoader");
-        ModelSourceDirectory = Path.Combine(
-            Paths.ConfigPath,
-            "CustomItemLoaderModels");
+        ModelSourceDirectory = Path.Combine(SharedArtLibrary.Root, "models");
         Directory.CreateDirectory(DefinitionDirectory);
         Directory.CreateDirectory(ModelSourceDirectory);
         ModdingToolsMenu.RegisterSession(
@@ -129,6 +134,7 @@ public sealed class Plugin : BaseUnityPlugin
             yield break;
 
         ResolveAvailableInheritedVisuals();
+        CustomAmmunitionSafety.ValidateRegisteredWeapons();
         registrationCompletionPublished = true;
         CustomItemApi.PublishRegistrationCompleted();
     }
@@ -183,10 +189,12 @@ public sealed class Plugin : BaseUnityPlugin
             $"slot '{arguments.Slot.Id}' became available.");
         if (result.PendingGlbs.Count > 0)
             CompleteGlbRendering(result.PendingGlbs);
+        CustomAmmunitionSafety.ValidateRegisteredWeapons();
     }
 
     private void OnDestroy()
     {
+        EquippedItemState.Dispose();
         CustomEquipmentSlotRegistry.SlotRegistered -=
             OnEquipmentSlotRegistered;
     }
@@ -198,11 +206,33 @@ public sealed class Plugin : BaseUnityPlugin
 
     internal static Sprite ApplyPlacementScale(Item item, Sprite sprite)
     {
-        if (!PlacementScales.TryGetValue(item.spriteName, out float scale) ||
-            Mathf.Approximately(scale, 1f))
+        if (TransformedPlacementSprites.Contains(sprite.GetInstanceID()))
             return sprite;
+        float scale = PlacementScales.TryGetValue(item.spriteName, out float configured) ? configured : 1f;
+        PlacementOffsetsByItem.TryGetValue(item.spriteName, out PlacementOffsets offsets);
+        return CreatePlacementScale(item, sprite, scale, offsets?.Get(0));
+    }
 
-        return CreatePlacementScale(item, sprite, scale);
+    internal static Sprite GetCursorPlacementSprite(Item item, Sprite source)
+    {
+        // The native cursor uses GetPreview while placed sprites use WorldItem.
+        // Match the latter's half-resolution branch for static non-pickupables.
+        if (VisualRules.HalfSizeWorldSprite(
+                GlbVisualSpriteKeys.Contains(item.spriteName),
+                item.GetItemComponent<ItemComponent_Pickupable>() != null,
+                item.GetItemComponent<ItemComponent_Gold>() != null) && source.texture.isReadable)
+        {
+            int key = source.GetInstanceID();
+            if (!CursorSourceSprites.TryGetValue(key, out Sprite small) || small == null)
+            {
+                Texture2D texture = FantResize.DownsampleImage(source.texture, 2.0, .25f);
+                texture.filterMode = FilterMode.Point;
+                small = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(.5f, .5f), 32);
+                CursorSourceSprites[key] = small;
+            }
+            source = small;
+        }
+        return ApplyPlacementScale(item, source);
     }
 
     internal static bool TryGetInheritedVisualSource(
@@ -257,14 +287,18 @@ public sealed class Plugin : BaseUnityPlugin
     internal static Sprite CreatePlacementScale(
         Item item,
         Sprite sprite,
-        float scale)
+        float scale,
+        PlacementOffset? offset = null)
     {
-        if (Mathf.Approximately(scale, 1f))
+        float x = offset?.x ?? 0f, y = offset?.y ?? 0f;
+        if (Mathf.Approximately(scale, 1f) && x == 0f && y == 0f)
             return sprite;
 
         string cacheKey =
             item.spriteName + "|" + sprite.GetInstanceID() + "|" +
-            scale.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            scale.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "|" +
+            x.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "|" +
+            y.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
         if (ScaledPlacementSprites.TryGetValue(
                 cacheKey,
                 out Sprite cached) &&
@@ -273,8 +307,8 @@ public sealed class Plugin : BaseUnityPlugin
 
         Rect rect = sprite.rect;
         Vector2 pivot = new(
-            sprite.pivot.x / rect.width,
-            sprite.pivot.y / rect.height);
+            PlacementOffset.ShiftPivot(sprite.pivot.x, rect.width, sprite.pixelsPerUnit, scale, x),
+            PlacementOffset.ShiftPivot(sprite.pivot.y, rect.height, sprite.pixelsPerUnit, scale, y));
         Sprite scaled = Sprite.Create(
             sprite.texture,
             rect,
@@ -284,6 +318,7 @@ public sealed class Plugin : BaseUnityPlugin
             "0.###",
             System.Globalization.CultureInfo.InvariantCulture);
         ScaledPlacementSprites[cacheKey] = scaled;
+        TransformedPlacementSprites.Add(scaled.GetInstanceID());
         return scaled;
     }
 }
@@ -554,7 +589,8 @@ internal static class CustomItemPlacementPreviewPatch
             if (__result == null)
                 __result = Plugin.ErrorSprite;
             if (fortyFiveView && __result != null)
-                __result = Plugin.ApplyPlacementScale(item, __result);
+                __result = __instance.Has3DModel(source) ? Plugin.ApplyPlacementScale(item, __result)
+                    : Plugin.GetCursorPlacementSprite(item, __result);
             return false;
         }
 
@@ -564,7 +600,7 @@ internal static class CustomItemPlacementPreviewPatch
             ? sprite
             : Plugin.ErrorSprite;
         if (fortyFiveView)
-            __result = Plugin.ApplyPlacementScale(item, __result);
+            __result = Plugin.GetCursorPlacementSprite(item, __result);
         return false;
     }
 }
@@ -572,6 +608,17 @@ internal static class CustomItemPlacementPreviewPatch
 [HarmonyPatch(typeof(WorldItem), "GetSprite")]
 internal static class CustomWorldItemScalePatch
 {
+    private static bool Prefix(WorldItem __instance, ref Sprite __result)
+    {
+        Item item = __instance.Item;
+        if (item == null || !Plugin.GlbVisualSpriteKeys.Contains(item.spriteName)) return true;
+        // Live spin is optional authoring data; its absence must not change
+        // the world dimensions of a distributed cache-only item.
+        __result = Plugin.ApplyPlacementScale(item,
+            Plugin.CustomSprites.TryGetValue(item.spriteName, out Sprite sprite) ? sprite : Plugin.ErrorSprite);
+        return false;
+    }
+
     private static void Postfix(WorldItem __instance, ref Sprite __result)
     {
         Item item = __instance.Item;
@@ -642,14 +689,25 @@ internal sealed class CustomItemAlwaysOnLightAdapter : MonoBehaviour
 {
     private const string LightId =
         "renegadex.silverpine.customitemloader.always-on";
-    private bool configured;
+    private bool started;
+    private LightDefinition? settings;
 
     internal void Configure(LightDefinition? settings)
     {
-        if (configured)
-            return;
-        configured = true;
+        this.settings = settings;
+        if (started) Apply();
+    }
 
+    private void Start()
+    {
+        // Awake runs before native saved component data is deserialized.
+        // Reconcile afterwards so a saved light cannot resurrect old settings.
+        started = true;
+        Apply();
+    }
+
+    private void Apply()
+    {
         LightAttacher attacher = GetComponent<LightAttacher>();
         if (attacher == null)
         {
@@ -1020,6 +1078,9 @@ internal static class ItemPackLoader
                 EnsureFurniturePickupableInvariant(item, placement);
 
                 Plugin.CustomSprites.Add(spriteKey, sprite);
+                if ((!definition.useCloneVisuals && !string.IsNullOrWhiteSpace(definition.model)) ||
+                    (definition.useCloneVisuals && cloneSource != null && Plugin.GlbVisualSpriteKeys.Contains(cloneSource.spriteName)))
+                    Plugin.GlbVisualSpriteKeys.Add(spriteKey);
                 if (definition.useCloneVisuals)
                     Plugin.InheritedVisualSources.Add(
                         spriteKey,
@@ -1027,6 +1088,8 @@ internal static class ItemPackLoader
                 Plugin.PlacementScales.Add(
                     spriteKey,
                     definition.placementScale);
+                if (placement != PlacementMode.ClonedPrefab && definition.placementOffsets != null)
+                    Plugin.PlacementOffsetsByItem.Add(spriteKey, definition.placementOffsets);
                 Plugin.WorkbenchTypes.Add(spriteKey, workbenchType);
                 Plugin.LightSettings.Add(spriteKey, definition.light);
                 if (definition.repairMaterial)
@@ -1206,11 +1269,8 @@ internal static class ItemPackLoader
             throw new InvalidDataException(
                 "Model assets must use the .glb extension.");
 
-        string cacheDirectory = Path.Combine(packDirectory, ".cache");
-        string cacheName = SanitizeFileName(
-            packId + "__" + itemId + cacheSuffix);
-        string cachePath = Path.Combine(cacheDirectory, cacheName + ".png");
-        string keyPath = Path.Combine(cacheDirectory, cacheName + ".key");
+        string cachePath = GetGlbCachePath(packDirectory, packId, itemId, cacheSuffix);
+        string keyPath = Path.ChangeExtension(cachePath, ".key");
         string? cacheKey = File.Exists(modelPath)
             ? ComputeCacheKey(modelPath, settings)
             : null;
@@ -1222,7 +1282,8 @@ internal static class ItemPackLoader
             keyPath,
             cacheKey,
             updatesMainSprite,
-            furnitureRotationIndex);
+            furnitureRotationIndex,
+            FindReadableGlbCachePath(packDirectory, packId, itemId, cacheSuffix));
     }
 
     private static void PrepareFurnitureRotations(
@@ -1330,7 +1391,9 @@ internal static class ItemPackLoader
         sprite = null!;
         try
         {
-            if (!File.Exists(pending.CachePath))
+            string path = File.Exists(pending.CachePath)
+                ? pending.CachePath : pending.LegacyCachePath;
+            if (!File.Exists(path))
                 return false;
 
             // With a source model, validate the cache against its contents
@@ -1338,15 +1401,15 @@ internal static class ItemPackLoader
             // is intentionally absent, so the deterministic PNG is the
             // authoritative packaged visual.
             if (pending.CacheKey != null &&
-                (!File.Exists(pending.CacheKeyPath) ||
+                (!File.Exists(Path.ChangeExtension(path, ".key")) ||
                  !string.Equals(
-                     File.ReadAllText(pending.CacheKeyPath).Trim(),
+                     File.ReadAllText(Path.ChangeExtension(path, ".key")).Trim(),
                      pending.CacheKey,
                      StringComparison.Ordinal)))
                 return false;
 
             sprite = ExternalSpriteLoader.Load(
-                pending.CachePath,
+                path,
                 pending.SpriteKey);
             return true;
         }
@@ -1405,14 +1468,7 @@ internal static class ItemPackLoader
         if (pending.CacheKey == null)
             throw new InvalidOperationException(
                 "Cannot create a GLB cache without the source model.");
-        Directory.CreateDirectory(
-            Path.GetDirectoryName(pending.CachePath)!);
-        File.WriteAllBytes(
-            pending.CachePath,
-            sprite.texture.EncodeToPNG());
-        File.WriteAllText(
-            pending.CacheKeyPath,
-            pending.CacheKey);
+        AssetFiles.WriteCache(pending.CachePath, sprite.texture.EncodeToPNG(), pending.CacheKey);
     }
 
     internal static string GetGlbCachePath(
@@ -1421,9 +1477,47 @@ internal static class ItemPackLoader
         string itemId,
         string cacheSuffix = "")
     {
-        string cacheName = SanitizeFileName(
-            packId + "__" + itemId + cacheSuffix);
-        return Path.Combine(packDirectory, ".cache", cacheName + ".png");
+        return AssetFiles.CachePath(packDirectory, packId, itemId, cacheSuffix);
+    }
+
+    internal static string FindReadableGlbCachePath(
+        string packDirectory, string packId, string itemId, string cacheSuffix = "")
+    {
+        string current = GetGlbCachePath(packDirectory, packId, itemId, cacheSuffix);
+        if (File.Exists(current)) return current;
+        string legacyName = SanitizeFileName(packId + "__" + itemId + cacheSuffix);
+        string legacy = Path.Combine(packDirectory, ".cache", legacyName + ".png");
+        if (!File.Exists(legacy)) return current;
+
+        // An old PNG contains no ownership metadata. Reject an ambiguous old
+        // name instead of silently giving two different items the same image.
+        var claims = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { current };
+        foreach (string json in Directory.GetFiles(packDirectory, "*.json"))
+        {
+            ItemPackDefinition? pack;
+            try { pack = JsonConvert.DeserializeObject<ItemPackDefinition>(File.ReadAllText(json)); }
+            catch { continue; }
+            if (pack?.items == null || pack.packId == null) continue;
+            foreach (ItemDefinition? item in pack.items)
+            {
+                if (item?.id == null || string.IsNullOrWhiteSpace(item.model)) continue;
+                string[] variants = item.furniture?.turnable == true
+                    ? new[] { "", "__furniture_right", "__furniture_back", "__furniture_left" }
+                    : new[] { "" };
+                foreach (string variant in variants)
+                    if (string.Equals(legacyName,
+                        SanitizeFileName(pack.packId + "__" + item.id + variant),
+                        StringComparison.OrdinalIgnoreCase))
+                        claims.Add(GetGlbCachePath(packDirectory, pack.packId, item.id, variant));
+            }
+        }
+        if (claims.Count > 1)
+        {
+            Plugin.Log.LogWarning("Ambiguous legacy GLB cache '" + legacy +
+                "'. Re-render the affected items from their source GLBs.");
+            return current;
+        }
+        return legacy;
     }
 
     private static string GetMainSpriteKey(string spriteKey)
@@ -1471,6 +1565,10 @@ internal static class ItemPackLoader
             requireExists: false);
         if (File.Exists(externalPath))
             return externalPath;
+
+        string oldLibrary = ResolvePackPath(Path.Combine(Paths.ConfigPath, "CustomItemLoaderModels"),
+            relativePath, requireExists: false);
+        if (File.Exists(oldLibrary)) return oldLibrary;
 
         // Keep older authoring packs usable while their models are moved out
         // of the distributable pack. New imports always use external storage.
@@ -1643,21 +1741,23 @@ internal static class ExternalSpriteLoader
                 $"Unsupported image format '{extension}'. Use PNG, JPG, or JPEG.");
 
         Texture2D texture = new(2, 2, TextureFormat.ARGB32, false);
-        if (!texture.LoadImage(File.ReadAllBytes(path), false))
+        try
         {
-            UnityEngine.Object.Destroy(texture);
-            throw new InvalidDataException("Unity could not decode image: " + path);
-        }
+            if (!texture.LoadImage(File.ReadAllBytes(path), false))
+                throw new InvalidDataException("Unity could not decode image: " + path);
 
-        texture.name = name;
-        texture.filterMode = FilterMode.Point;
-        Sprite sprite = Sprite.Create(
-            texture,
-            new Rect(0, 0, texture.width, texture.height),
-            new Vector2(0.5f, 0.5f),
-            32f);
-        sprite.name = name;
-        return sprite;
+            texture.name = name;
+            texture.filterMode = FilterMode.Point;
+            Sprite sprite = Sprite.Create(
+                texture,
+                new Rect(0, 0, texture.width, texture.height),
+                new Vector2(0.5f, 0.5f),
+                32f);
+            if (sprite == null) throw new InvalidDataException("Unity could not create sprite: " + path);
+            sprite.name = name;
+            return sprite;
+        }
+        catch { UnityEngine.Object.Destroy(texture); throw; }
     }
 }
 
@@ -1838,7 +1938,7 @@ internal static class GlbThumbnailRenderer
                     import,
                     sourceMaterialIndex,
                     original);
-                if (texture == null && fallbackTextures.Count > 0)
+                if (texture == null && VisualRules.AllowTextureFallback(sourceMaterialIndex) && fallbackTextures.Count > 0)
                 {
                     texture = fallbackTextures[
                         Mathf.Min(fallbackIndex, fallbackTextures.Count - 1)];
@@ -2144,6 +2244,11 @@ internal sealed class ItemDefinition
     public IconDefinition? icon;
     public string? placement = "Sprite";
     public float placementScale = 1f;
+    public PlacementOffsets? placementOffsets;
+    // Provenance only: runtime visuals always resolve pack-local images.
+    public string? artAssetId;
+    public string? artOriginalName;
+    public FurnitureRotationSpritesDefinition? cachedArtRotations;
     public string? workbench = "None";
     public LightDefinition? light;
     public FurnitureDefinition? furniture;
@@ -2197,6 +2302,7 @@ internal sealed class ItemDefinition
             throw new InvalidDataException(
                 "Item placementScale must be between 0.1 and 10.");
         light?.Validate();
+        placementOffsets?.Validate();
         furniture?.Validate(
             usesImage: UsesImageVisuals,
             usesModel: hasModel);
@@ -2353,6 +2459,11 @@ internal static class CustomArmorDefensePatch
         ref Dictionary<DamageType, int> __result)
     {
         Item item = __instance.item;
+        if (EquippedItemState.TryGetArmor(__instance, out var saved))
+        {
+            __result = new Dictionary<DamageType, int>(saved.Values);
+            return false;
+        }
         if (item == null ||
             string.IsNullOrWhiteSpace(item.spriteName) ||
             !Plugin.ArmorOverrides.TryGetValue(
@@ -2798,6 +2909,7 @@ internal sealed class PendingGlb
     internal string SpriteKey { get; }
     internal string CachePath { get; }
     internal string CacheKeyPath { get; }
+    internal string LegacyCachePath { get; }
     internal string? CacheKey { get; }
     internal bool UpdatesMainSprite { get; }
     internal int FurnitureRotationIndex { get; }
@@ -2810,13 +2922,15 @@ internal sealed class PendingGlb
         string cacheKeyPath,
         string? cacheKey,
         bool updatesMainSprite,
-        int furnitureRotationIndex)
+        int furnitureRotationIndex,
+        string legacyCachePath)
     {
         ModelPath = modelPath;
         Settings = settings;
         SpriteKey = spriteKey;
         CachePath = cachePath;
         CacheKeyPath = cacheKeyPath;
+        LegacyCachePath = legacyCachePath;
         CacheKey = cacheKey;
         UpdatesMainSprite = updatesMainSprite;
         FurnitureRotationIndex = furnitureRotationIndex;

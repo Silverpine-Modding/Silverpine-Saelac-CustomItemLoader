@@ -18,7 +18,7 @@ namespace SilverpineMods.CustomItemLoader;
 public static class CustomItemApi
 {
     public const int ApiVersion = 11;
-    public const string GlbSpriteRendererVersion = "12";
+    public const string GlbSpriteRendererVersion = "13";
 
     private static readonly object Sync = new();
     private static readonly Dictionary<string, CustomItemInfo> ByQualifiedId =
@@ -204,7 +204,7 @@ public static class CustomItemApi
         ValidateExtensionPropertyName(propertyName);
 
         CustomItemInfo info = RequireItem(qualifiedId);
-        JObject item = LoadSourceItem(info, out JObject document);
+        JObject item = LoadSourceItem(info, out JObject document, out string sourceText);
         string name = propertyName.Trim();
         JProperty? existing = item.Properties().FirstOrDefault(value =>
             value.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -233,19 +233,7 @@ public static class CustomItemApi
                 existing.Value = value;
         }
 
-        string temporary = info.SourceJsonPath + ".tmp";
-        try
-        {
-            File.WriteAllText(
-                temporary,
-                document.ToString(Formatting.Indented));
-            File.Copy(temporary, info.SourceJsonPath, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporary))
-                File.Delete(temporary);
-        }
+        PackFileStore.Save(info.SourceJsonPath, document.ToString(Formatting.Indented), sourceText);
 
         Plugin.Log.LogInfo(
             $"'{ownerId.Trim()}' updated extension '{name}' for " +
@@ -307,17 +295,15 @@ public static class CustomItemApi
     /// </summary>
     public static IReadOnlyList<string> GetStoredGlbModelReferences()
     {
-        if (string.IsNullOrWhiteSpace(Plugin.ModelSourceDirectory) ||
-            !Directory.Exists(Plugin.ModelSourceDirectory))
-            return Array.Empty<string>();
+        string[] folders = { Plugin.ModelSourceDirectory,
+            Path.Combine(BepInEx.Paths.ConfigPath, "CustomItemLoaderModels") };
         return Array.AsReadOnly(
-            Directory.GetFiles(
-                    Plugin.ModelSourceDirectory,
-                    "*.glb",
-                    SearchOption.TopDirectoryOnly)
+            folders.Where(folder => !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+                .SelectMany(folder => Directory.GetFiles(folder, "*.glb", SearchOption.TopDirectoryOnly))
                 .Select(Path.GetFileName)
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
                 .ToArray());
     }
@@ -366,8 +352,9 @@ public static class CustomItemApi
     }
 
     /// <summary>
-    /// Returns the deterministic distributable PNG path used for a GLB-derived
-    /// sprite owned by an item or add-on.
+    /// Returns the distributable PNG path used for a GLB-derived sprite owned
+    /// by an item or add-on, falling back to an unambiguous existing legacy PNG.
+    /// If none exists, returns the v2 path that a new render will write.
     /// </summary>
     public static string GetGlbSpriteCachePath(
         string packDirectory,
@@ -376,7 +363,7 @@ public static class CustomItemApi
         string cacheSuffix = "")
     {
         ValidateGlbCacheIdentity(packDirectory, packId, itemId);
-        return ItemPackLoader.GetGlbCachePath(
+        return ItemPackLoader.FindReadableGlbCachePath(
             Path.GetFullPath(packDirectory),
             packId.Trim(),
             itemId.Trim(),
@@ -450,20 +437,15 @@ public static class CustomItemApi
         string name = string.IsNullOrWhiteSpace(spriteName)
             ? packId.Trim() + ":" + itemId.Trim()
             : spriteName.Trim();
+        PendingGlb pending = ItemPackLoader.CreatePendingGlb(
+            Path.GetFullPath(packDirectory), packId.Trim(), itemId.Trim(),
+            modelPath, settings, name, cacheSuffix ?? "");
         Sprite rendered = await GlbThumbnailRenderer.RenderAsync(
             modelPath,
             settings,
             name);
         try
         {
-            PendingGlb pending = ItemPackLoader.CreatePendingGlb(
-                Path.GetFullPath(packDirectory),
-                packId.Trim(),
-                itemId.Trim(),
-                modelPath,
-                settings,
-                name,
-                cacheSuffix ?? "");
             ItemPackLoader.WriteCachedSprite(pending, rendered);
             return rendered;
         }
@@ -671,8 +653,15 @@ public static class CustomItemApi
     private static JObject LoadSourceItem(
         CustomItemInfo info,
         out JObject document)
+        => LoadSourceItem(info, out document, out _);
+
+    private static JObject LoadSourceItem(
+        CustomItemInfo info,
+        out JObject document,
+        out string sourceText)
     {
-        document = JObject.Parse(File.ReadAllText(info.SourceJsonPath));
+        sourceText = File.ReadAllText(info.SourceJsonPath);
+        document = JObject.Parse(sourceText);
         string sourcePackId = document.GetValue(
             "packId",
             StringComparison.OrdinalIgnoreCase)?.Value<string>() ?? "";

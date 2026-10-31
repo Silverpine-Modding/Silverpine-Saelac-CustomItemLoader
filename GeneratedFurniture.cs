@@ -32,6 +32,7 @@ internal static class GeneratedFurnitureFactory
         ByPrefabName = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, GeneratedFurnitureRecord>
         BySpriteKey = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> LegacyPrefabNames = new(StringComparer.OrdinalIgnoreCase);
 
     internal static void Attach(
         Item item,
@@ -50,7 +51,7 @@ internal static class GeneratedFurnitureFactory
             usesImage: definition.UsesImageVisuals,
             usesModel: !string.IsNullOrWhiteSpace(definition.model));
 
-        string prefabName = CreatePrefabName(packId, itemId);
+        string prefabName = AssetFiles.FurnitureName(packId, itemId);
         if (ByPrefabName.ContainsKey(prefabName))
             throw new InvalidOperationException(
                 $"Generated furniture prefab '{prefabName}' is duplicated.");
@@ -58,7 +59,8 @@ internal static class GeneratedFurnitureFactory
         Sprite placedSprite = Plugin.CreatePlacementScale(
             item,
             sourceSprite,
-            definition.placementScale);
+            definition.placementScale,
+            definition.placementOffsets?.Get(0));
         Sprite[] sourceRotations = NormalizeRotations(
             sourceSprite,
             sourceRotationSprites);
@@ -66,7 +68,8 @@ internal static class GeneratedFurnitureFactory
         Sprite[] placedRotations = CreatePlacedRotations(
             item,
             sourceRotations,
-            definition.placementScale);
+            definition.placementScale,
+            definition.placementOffsets);
         GameObject template = CreateTemplate(
             prefabName,
             item,
@@ -79,6 +82,9 @@ internal static class GeneratedFurnitureFactory
                 Plugin.PluginGuid,
                 prefabName,
                 template);
+        string legacyName = PrefabPrefix + packId + "__" + itemId;
+        ModRegistration? alias = null;
+        bool ownsLegacyName = false;
         try
         {
             ItemComponent_Pickupable component = new(template);
@@ -98,9 +104,20 @@ internal static class GeneratedFurnitureFactory
                 light);
             ByPrefabName.Add(prefabName, record);
             BySpriteKey.Add(item.spriteName, record);
+            // Old saves used an ambiguous delimiter. Keep the first claimant
+            // as its legacy target, but allow both new identities to register.
+            ownsLegacyName = LegacyPrefabNames.Add(legacyName);
+            if (ownsLegacyName)
+                alias = SerializablePrefabs.RegisterAlias(Plugin.PluginGuid, legacyName, prefabName);
+            else
+                Plugin.Log.LogWarning($"Furniture '{qualifiedId}' shares legacy prefab name '{legacyName}'. New saves use distinct names; the legacy alias remains with the first registered item.");
         }
         catch
         {
+            alias?.Dispose();
+            if (ownsLegacyName) LegacyPrefabNames.Remove(legacyName);
+            ByPrefabName.Remove(prefabName);
+            BySpriteKey.Remove(item.spriteName);
             registration.Unregister(destroyTemplate: true);
             throw;
         }
@@ -320,9 +337,6 @@ internal static class GeneratedFurnitureFactory
             workbench.Configure(record.WorkbenchType);
         }
 
-        if (record.Light?.enabled != true)
-            return;
-
         CustomItemAlwaysOnLightAdapter lightAdapter =
             gameObject.GetComponent<CustomItemAlwaysOnLightAdapter>() ??
             gameObject.AddComponent<CustomItemAlwaysOnLightAdapter>();
@@ -404,14 +418,17 @@ internal static class GeneratedFurnitureFactory
     private static Sprite[] CreatePlacedRotations(
         Item item,
         IReadOnlyList<Sprite> sourceSprites,
-        float placementScale)
+        float placementScale,
+        PlacementOffsets? offsets = null)
     {
+        if (offsets == null) Plugin.PlacementOffsetsByItem.TryGetValue(item.spriteName, out offsets);
         var result = new Sprite[4];
         for (int index = 0; index < result.Length; index++)
             result[index] = Plugin.CreatePlacementScale(
                 item,
                 sourceSprites[index],
-                placementScale);
+                placementScale,
+                offsets?.Get(index));
         return result;
     }
 
@@ -437,10 +454,6 @@ internal static class GeneratedFurnitureFactory
                ByPrefabName.TryGetValue(prefabName, out record!);
     }
 
-    private static string CreatePrefabName(
-        string packId,
-        string itemId) =>
-        PrefabPrefix + packId + "__" + itemId;
 }
 
 internal sealed class GeneratedFurnitureRecord

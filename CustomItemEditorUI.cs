@@ -11,7 +11,7 @@ using UnityEngine;
 
 namespace SilverpineMods.CustomItemLoader;
 
-internal sealed class CustomItemEditorUI : ModToolBehaviour
+internal sealed partial class CustomItemEditorUI : ModToolBehaviour
 {
     private const float DesignWidth = 1920f;
     private const float DesignHeight = 1080f;
@@ -56,7 +56,9 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
     private string cloneSearch = "";
     private bool open;
     private bool generatingPreview;
+    private int previewGeneration;
     private bool filePickerOpen;
+    private bool closeConfirmation;
     private bool grassTerrainLookupAttempted;
     private bool identityExpanded = true;
     private bool baseBehaviorExpanded = true;
@@ -65,15 +67,17 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
     private bool worldPlacementExpanded = true;
     private bool generatedFurnitureExpanded = true;
     private bool gameValuesExpanded = true;
-    private bool appearanceExpanded = true;
     private bool clonePickerExpanded;
-    private bool appearancePreviewExpanded;
     private GUIStyle? wrappedTextAreaStyle;
 
     private sealed class PackDocument
     {
         internal string Path = "";
         internal ItemPackDefinition Pack = new();
+        internal string? SourceText;
+        internal string SavedSnapshot = "";
+        internal bool HasUnsavedChanges => SourceText == null ||
+            SavedSnapshot != JsonConvert.SerializeObject(Pack);
     }
 
     internal static void Open(ModToolSession session)
@@ -89,7 +93,9 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         }
 
         instance.AttachSession(session);
+        session.EscapeHandler = instance.HandleEscapeRequest;
         instance.open = true;
+        instance.closeConfirmation = false;
         instance.grassTerrainSprite = null;
         instance.grassTerrainLookupAttempted = false;
         instance.RefreshDocuments();
@@ -109,10 +115,8 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
              !GenericListUI.Instance.gameObject.activeInHierarchy))
             EndFilePickerModal();
 
-        if (open &&
-            !filePickerOpen &&
-            Input.GetKeyDown(KeyCode.Escape))
-            Close();
+        // Escape is routed exclusively through ModTools' session handler.
+        // Polling it here as well would race the framework's emergency close.
     }
 
     private void OnGUI()
@@ -120,30 +124,59 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         if (!open || filePickerOpen)
             return;
 
+        using ModGuiScope scope = ModGui.BeginScaled(DesignWidth, DesignHeight);
         GUI.enabled = true;
         GUI.color = Color.white;
         GUI.backgroundColor = Color.white;
         GUI.depth = -1000;
 
-        using ModGuiScope scope = ModGui.BeginScaled(DesignWidth, DesignHeight);
-        Color old = GUI.color;
-        GUI.color = new Color(0.055f, 0.075f, 0.095f, 0.99f);
-        GUI.DrawTexture(
-            new Rect(0, 0, DesignWidth, DesignHeight),
-            Texture2D.whiteTexture);
-        GUI.color = old;
+        GUISkin previousSkin = GUI.skin;
+        EnsureEditorSkin();
+        GUI.skin = editorSkin;
+        try
+        {
+            if (closeConfirmation)
+            {
+                GUILayout.BeginArea(new Rect(560, 365, 800, 350), GUI.skin!.box);
+                GUILayout.Label("Unsaved pack changes", editorHeading!);
+                GUILayout.Label("One or more packs have unsaved edits. Keep editing to save each pack, or discard all unsaved edits and return to Mods.");
+                if (GUILayout.Button("Keep editing")) closeConfirmation = false;
+                if (GUILayout.Button("Discard unsaved edits and close"))
+                { CloseImmediately(); GUIUtility.ExitGUI(); }
+                GUILayout.EndArea();
+                return;
+            }
+            Color old = GUI.color;
+            GUI.color = new Color(0.055f, 0.075f, 0.095f, 0.99f);
+            GUI.DrawTexture(
+                new Rect(0, 0, DesignWidth, DesignHeight),
+                Texture2D.whiteTexture);
+            GUI.color = old;
 
-        GUILayout.BeginArea(
-            new Rect(12, 10, DesignWidth - 24, DesignHeight - 20));
-        DrawHeader();
-        GUILayout.BeginHorizontal();
-        DrawPackPanel();
-        DrawItemPanel();
-        DrawDetailsPanel();
-        GUILayout.EndHorizontal();
-        if (!string.IsNullOrWhiteSpace(status))
-            GUILayout.Label(status, GUI.skin.box);
-        GUILayout.EndArea();
+            GUILayout.BeginArea(
+                new Rect(12, 10, DesignWidth - 24, DesignHeight - 20));
+            DrawHeader();
+            GUILayout.Space(10);
+            GUILayout.BeginHorizontal();
+            DrawLibrarySidebar();
+            GUILayout.Space(EditorFormLayout.PanelGap);
+            if (assetLibraryOpen)
+                DrawArtLibrary();
+            else
+            {
+                DrawDetailsPanel();
+                GUILayout.Space(EditorFormLayout.PanelGap);
+                DrawPersistentPreview();
+            }
+            GUILayout.EndHorizontal();
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                GUILayout.Space(10);
+                GUILayout.Label(status, GUI.skin!.box);
+            }
+            GUILayout.EndArea();
+        }
+        finally { GUI.skin = previousSkin; }
     }
 
     private void DrawHeader()
@@ -155,117 +188,21 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             : string.IsNullOrWhiteSpace(document.Path)
                 ? "New unsaved pack"
                 : Path.GetFileName(document.Path));
-        if (GUILayout.Button("Refresh", GUILayout.Width(90)))
-            RefreshDocuments();
+        if (DrawActionButton("Asset library", 150))
+        { OpenArtLibrary(); GUIUtility.ExitGUI(); }
         GUI.enabled = document != null;
-        if (GUILayout.Button("Save Pack", GUILayout.Width(110)))
-            SaveCurrent();
+        if (DrawActionButton("Save Pack", 110))
+        { SaveCurrent(); GUIUtility.ExitGUI(); }
         GUI.enabled = true;
-        if (GUILayout.Button("Close", GUILayout.Width(90)))
-            Close();
+        if (DrawActionButton("Back to Mods", 150))
+        { Close(); GUIUtility.ExitGUI(); }
         GUILayout.EndHorizontal();
     }
 
-    private void DrawPackPanel()
-    {
-        GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(285));
-        GUILayout.Label("Item packs");
-        if (GUILayout.Button("New Pack"))
-            CreateNewPack();
-
-        packScroll = GUILayout.BeginScrollView(packScroll);
-        foreach (PackDocument candidate in documents)
-        {
-            string label = string.IsNullOrWhiteSpace(candidate.Pack.packId)
-                ? Path.GetFileNameWithoutExtension(candidate.Path)
-                : candidate.Pack.packId!;
-            if (!candidate.Pack.enabled)
-                label += " (disabled)";
-            Color old = GUI.backgroundColor;
-            if (ReferenceEquals(candidate, document))
-                GUI.backgroundColor = new Color(0.55f, 0.75f, 0.92f);
-            if (GUILayout.Button(label))
-                SelectDocument(candidate);
-            GUI.backgroundColor = old;
-        }
-        GUILayout.EndScrollView();
-
-        if (document != null)
-        {
-            GUILayout.BeginHorizontal();
-            GUI.enabled = !document.Pack.enabled;
-            if (GUILayout.Button("Enable"))
-                SetPackEnabled(true);
-            GUI.enabled = document.Pack.enabled;
-            if (GUILayout.Button("Disable"))
-                SetPackEnabled(false);
-            GUI.enabled = true;
-            GUILayout.EndHorizontal();
-            GUILayout.Label(
-                document.Pack.enabled
-                    ? "Enabled — items register on startup."
-                    : "Disabled — items are skipped on startup.");
-            GUILayout.Label("Pack ID");
-            string next = DrawWrappedTextInput(
-                document.Pack.packId ?? "");
-            if (next != document.Pack.packId)
-                document.Pack.packId = next;
-            GUILayout.Label(
-                "Use a stable value such as author.packname. Changing a " +
-                "released ID changes its internal sprite keys.");
-        }
-        GUILayout.EndVertical();
-    }
-
-    private void DrawItemPanel()
-    {
-        GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(315));
-        GUILayout.Label("Items");
-        GUI.enabled = document != null;
-        GUILayout.BeginHorizontal();
-        if (GUILayout.Button("Add"))
-            AddItem();
-        GUI.enabled = CurrentItem != null;
-        if (GUILayout.Button("Duplicate"))
-            DuplicateItem();
-        GUILayout.EndHorizontal();
-        GUI.enabled = true;
-
-        itemScroll = GUILayout.BeginScrollView(itemScroll);
-        if (document?.Pack.items != null)
-        {
-            for (int i = 0; i < document.Pack.items.Count; i++)
-            {
-                ItemDefinition? item = document.Pack.items[i];
-                string label = string.IsNullOrWhiteSpace(item?.name)
-                    ? item?.id ?? $"Invalid item {i + 1}"
-                    : item!.name!;
-                Color old = GUI.backgroundColor;
-                if (i == selectedItem)
-                    GUI.backgroundColor = new Color(0.55f, 0.75f, 0.92f);
-                if (GUILayout.Button(label))
-                    SelectItem(i);
-                GUI.backgroundColor = old;
-            }
-        }
-        GUILayout.EndScrollView();
-
-        GUI.enabled = CurrentItem != null &&
-                      document!.Pack.items!.Count > 1;
-        if (GUILayout.Button("Remove Selected Item"))
-        {
-            document!.Pack.items!.RemoveAt(selectedItem);
-            selectedItem = Mathf.Clamp(
-                selectedItem, 0, document.Pack.items.Count - 1);
-            SelectionChanged();
-        }
-        GUI.enabled = true;
-        GUILayout.EndVertical();
-    }
 
     private void DrawDetailsPanel()
     {
-        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(EditorFormLayout.DetailsWidth));
         ItemDefinition? item = CurrentItem;
         if (item == null)
         {
@@ -276,46 +213,49 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             return;
         }
 
+        GUILayout.Label(item.name ?? "Unnamed item", editorHeading!);
+        GUILayout.Label(item.id ?? "", editorMuted!);
+        int nextTab = GUILayout.Toolbar(editorTab, new[] { "Item", "Appearance", "Placement", "Gameplay" }, editorAction!, GUILayout.MinHeight(44));
+        if (nextTab != editorTab) { editorTab = nextTab; detailsScroll = Vector2.zero; CancelOffsetDrag(); GUIUtility.ExitGUI(); }
+        GUILayout.Space(14);
         detailsScroll = GUILayout.BeginScrollView(detailsScroll);
-        if (DrawFoldout("Identity", ref identityExpanded))
+        formWidth = EditorFormLayout.ContentWidth;
+        GUILayout.BeginVertical(GUILayout.Width(formWidth));
+        if (editorTab == 0 && DrawFoldout("Identity", ref identityExpanded))
         {
             DrawText("Item ID", item.id ?? "", value => item.id = value);
             DrawText("Display name", item.name ?? "", value => item.name = value);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Description", GUILayout.Width(145));
+            BeginField("Description");
             item.description = DrawWrappedTextInput(
                 item.description ?? "",
                 allowLineBreaks: true,
                 minimumHeight: 70f);
-            GUILayout.EndHorizontal();
+            EndField();
         }
 
-        GUILayout.Space(8);
-        if (DrawFoldout("Prefab inheritance", ref baseBehaviorExpanded))
+        if (editorTab == 0 && DrawFoldout("Prefab inheritance", ref baseBehaviorExpanded))
         {
             DrawCloneChoice(item);
             GUILayout.Space(5);
             DrawEquipmentSlotChoice(item);
-            GUILayout.Space(5);
-            if (DrawFoldout(
-                    "Inherited component overrides",
-                    ref inheritedGameplayExpanded))
-                DrawComponentOverrides(item);
         }
 
-        GUILayout.Space(8);
-        if (DrawFoldout(
+        if (editorTab == 3 && DrawFoldout("Inherited component overrides", ref inheritedGameplayExpanded))
+            DrawComponentOverrides(item);
+
+        if (editorTab == 3 && DrawFoldout(
                 "Equipped attribute modifiers",
                 ref attributesExpanded))
             DrawAttributeModifiers(item);
 
-        GUILayout.Space(8);
-        if (DrawFoldout(
+        if (editorTab == 2 && DrawFoldout(
                 "World placement and interaction",
                 ref worldPlacementExpanded))
         {
             DrawColumnPair(
-                () => DrawChoice(
+                () =>
+                {
+                    DrawChoice(
                     "Placement",
                     item.placement ?? PlacementModes[0],
                     PlacementModes,
@@ -335,7 +275,13 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                             ? item.furniture ?? new FurnitureDefinition()
                             : null;
                         RefreshPlacementPreview();
-                    }),
+                    });
+                    DrawHelp(IsClonedPrefabPlacement(item)
+                        ? "Keeps the clone's original prefab, mechanics, and appearance."
+                        : IsGeneratedPrefabPlacement(item)
+                            ? "Generates pickupable furniture using the selected visual."
+                            : "Uses the selected visual as a persistent placed WorldItem.");
+                },
                 () =>
                 {
                     GUI.enabled = !IsClonedPrefabPlacement(item);
@@ -345,24 +291,14 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                         WorkbenchTypes,
                         value => item.workbench = value);
                     GUI.enabled = true;
+                    DrawHelp(IsClonedPrefabPlacement(item)
+                        ? "Workbench adapters require Sprite or GeneratedPrefab placement."
+                        : "Adds a workbench interaction to the placed object.");
                 });
             bool clonedPrefabPlacement = IsClonedPrefabPlacement(item);
             bool generatedPrefabPlacement =
                 IsGeneratedPrefabPlacement(item);
             bool supportsAdapters = !clonedPrefabPlacement;
-            DrawColumnPair(
-                () => GUILayout.Label(
-                    clonedPrefabPlacement
-                        ? "Keeps the clone's original prefab, mechanics, and appearance."
-                        : generatedPrefabPlacement
-                            ? "Generates a pickupable furniture prefab using the selected visual."
-                            : "Uses the selected visual as a persistent placed WorldItem."),
-                () => GUILayout.Label(
-                    clonedPrefabPlacement
-                        ? "Workbench adapters require Sprite or GeneratedPrefab placement."
-                        : generatedPrefabPlacement
-                            ? "Embeds the workbench interaction in the generated prefab."
-                            : "Adds a second interaction beside Take on the placed WorldItem."));
             GUI.enabled = !clonedPrefabPlacement;
             DrawFloat(
                 "Placed sprite scale",
@@ -374,7 +310,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                     RefreshPlacementPreview();
                 });
             GUI.enabled = true;
-            GUILayout.Label(clonedPrefabPlacement
+            DrawHelp(clonedPrefabPlacement
                 ? "Not used by ClonedPrefab; its original prefab keeps its own scale."
                 : "Scales this item's selected visual in the placement cursor and world.");
             DrawLightSettings(item, supportsAdapters);
@@ -385,8 +321,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 DrawFurnitureSettings(item);
         }
 
-        GUILayout.Space(8);
-        if (DrawFoldout("Game values", ref gameValuesExpanded))
+        if (editorTab == 0 && DrawFoldout("Game values", ref gameValuesExpanded))
         {
             DrawColumnPair(
                 () => DrawChoice(
@@ -410,36 +345,38 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                     "item.bulk",
                     item.bulk,
                     value => item.bulk = value));
-            DrawColumnPair(
-                () => DrawChoice(
-                    "Market crate",
-                    item.market ?? MarketBehaviors[0],
-                    MarketBehaviors,
-                    value => item.market = value),
-                () => GUILayout.Label(GetMarketBehaviorDescription(
-                    item.market)));
-            DrawColumnPair(
-                () => DrawBool(
-                    "Repair material",
-                    item.repairMaterial,
-                    value => item.repairMaterial = value),
-                () => GUILayout.Label(
-                    "Lets this item fill Silverpine's repair-bench material slots. " +
-                    "Its final gold value determines how much repair value it provides."));
+            DrawMarketAndRepair(item);
         }
 
-        GUILayout.Space(8);
-        if (DrawFoldout("Appearance", ref appearanceExpanded))
+        if (editorTab == 1)
             DrawVisuals(item);
+        GUILayout.Space(16);
+        GUILayout.EndVertical();
         GUILayout.EndScrollView();
         GUILayout.EndVertical();
     }
 
-    private static bool DrawFoldout(string label, ref bool expanded)
+    private void DrawMarketAndRepair(ItemDefinition item)
+    {
+        DrawColumnPair(
+            () =>
+            {
+                DrawChoice("Market crate", item.market ?? MarketBehaviors[0], MarketBehaviors,
+                    value => item.market = value);
+                DrawHelp(GetMarketBehaviorDescription(item.market));
+            },
+            () =>
+            {
+                DrawBool("Repair material", item.repairMaterial, value => item.repairMaterial = value);
+                DrawHelp("Fills repair-bench material slots. The item's final gold value determines how much repair value it provides.");
+            });
+    }
+
+    private bool DrawFoldout(string label, ref bool expanded)
     {
         if (GUILayout.Button(
                 (expanded ? "▼  " : "▶  ") + label,
-                GUI.skin.box))
+                editorFoldout!, GUILayout.MinHeight(46), GUILayout.ExpandWidth(true)))
             expanded = !expanded;
         return expanded;
     }
@@ -1031,13 +968,12 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         bool value,
         Action<bool> assign)
     {
-        GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(145));
-        bool next = GUILayout.Toggle(value, value ? "Enabled" : "Disabled");
+        BeginField(label);
+        bool next = GUILayout.Toggle(value, value ? "Enabled" : "Disabled", editorAction!,
+            GUILayout.Width(144), GUILayout.MinHeight(EditorFormLayout.ControlHeight));
         if (next != value)
             assign(next);
-        GUILayout.FlexibleSpace();
-        GUILayout.EndHorizontal();
+        EndField();
     }
 
     private static Item? GetCloneTemplate(ItemDefinition item)
@@ -1052,19 +988,17 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
 
     private void DrawCloneChoice(ItemDefinition item)
     {
+        BeginField("Clone item");
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Clone item", GUILayout.Width(145));
         GUILayout.Label(
             string.IsNullOrWhiteSpace(item.clone)
                 ? "(No clone — inert item)"
                 : item.clone!,
-            GUI.skin.box);
-        if (GUILayout.Button(
-                clonePickerExpanded ? "Hide browser" : "Change…",
-                GUILayout.Width(105)))
+            editorValue!, GUILayout.MinWidth(0), GUILayout.MinHeight(EditorFormLayout.ControlHeight), GUILayout.ExpandWidth(true));
+        if (DrawActionButton(clonePickerExpanded ? "Hide browser" : "Change…", 105))
             clonePickerExpanded = !clonePickerExpanded;
         GUI.enabled = !string.IsNullOrWhiteSpace(item.clone);
-        if (GUILayout.Button("Clear", GUILayout.Width(70)))
+        if (DrawActionButton("Clear", 70))
         {
             item.clone = null;
             item.componentOverrides = null;
@@ -1075,22 +1009,24 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         }
         GUI.enabled = true;
         GUILayout.EndHorizontal();
+        EndField();
 
         if (!clonePickerExpanded)
         {
-            GUILayout.Label(
+            DrawHelp(
                 string.IsNullOrWhiteSpace(item.clone)
                     ? "Choose Change… to select inherited gameplay behavior."
                     : "The selected prefab supplies this item's gameplay components.");
             return;
         }
 
+        BeginField("Find base item");
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Find base item", GUILayout.Width(145));
         cloneSearch = DrawWrappedTextInput(cloneSearch);
-        if (GUILayout.Button("×", GUILayout.Width(32)))
+        if (DrawActionButton("×", 32))
             cloneSearch = "";
         GUILayout.EndHorizontal();
+        EndField();
 
         string[] matches = ItemLibrary.Items
             .Select(value => value.name)
@@ -1171,33 +1107,28 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             index = 1;
         }
 
+        BeginField("Equipment slot");
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Equipment slot", GUILayout.Width(145));
-        if (GUILayout.Button("◀", GUILayout.Width(ChoiceArrowWidth)))
+        if (DrawActionButton("◀", GetChoiceArrowWidth()))
         {
             int next = (index - 1 + ids.Count) % ids.Count;
             item.equipmentSlot = ids[next];
         }
 
-        float valueWidth = ChoiceMinimumValueWidth;
-        foreach (string label in labels)
-            valueWidth = Mathf.Max(
-                valueWidth,
-                GUI.skin.label.CalcSize(new GUIContent(label)).x + 12f);
-        valueWidth = Mathf.Min(valueWidth, ChoiceMaximumValueWidth);
-        GUILayout.Label(labels[index], GUILayout.Width(valueWidth));
+        DrawChoiceValue(labels[index], labels);
 
-        if (GUILayout.Button("▶", GUILayout.Width(ChoiceArrowWidth)))
+        if (DrawActionButton("▶", GetChoiceArrowWidth()))
         {
             int next = (index + 1) % ids.Count;
             item.equipmentSlot = ids[next];
         }
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
+        EndField();
 
         if (item.equipmentSlot == null)
         {
-            GUILayout.Label(
+            DrawHelp(
                 "Uses the cloned item's slot. Without a clone, the item is " +
                 "not equipable.");
         }
@@ -1207,12 +1138,12 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                  selected.NumericValue ==
                  (int)EquipmentSlotType.NotEquipable)
         {
-            GUILayout.Label(
+            DrawHelp(
                 "Explicitly disables equipping, even when the clone is equipable.");
         }
         else
         {
-            GUILayout.Label(
+            DrawHelp(
                 "Overrides the clone's slot. Add-on mods can register more " +
                 "choices through CustomEquipmentSlotRegistry.");
         }
@@ -1234,16 +1165,20 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
 
     private void DrawVisuals(ItemDefinition item)
     {
-        int mode = item.useCloneVisuals
+        int mode = !string.IsNullOrWhiteSpace(item.artAssetId) ? 3 : item.useCloneVisuals
             ? 0
             : item.model != null
                 ? 2
                 : 1;
         int next = GUILayout.Toolbar(
             mode,
-            new[] { "Base Item", "Image", "GLB Model" });
+            new[] { "Base Item", "Image", "GLB Model", "Cached art" }, editorAction!, GUILayout.MinHeight(44));
         if (next != mode)
         {
+            if (next == 3) { OpenArtLibrary(); GUIUtility.ExitGUI(); return; }
+            item.artAssetId = null;
+            item.artOriginalName = null;
+            item.cachedArtRotations = null;
             if (next == 0)
             {
                 item.useCloneVisuals = true;
@@ -1272,6 +1207,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             ClearPreview();
             if (next == 0)
                 RefreshPreview();
+            GUIUtility.ExitGUI();
         }
 
         if (next == 0)
@@ -1289,10 +1225,16 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             DrawAssetPath(
                 "Image",
                 item.image ?? "",
-                value => item.image = value,
+                value => { item.image = value; item.artOriginalName = null; },
                 () => BrowseAsset(
                     path => HasExtension(path, ".png", ".jpg", ".jpeg"),
                     value => item.image = value));
+        }
+        else if (next == 3)
+        {
+            GUILayout.Label(item.artOriginalName ?? "Cached asset", editorHeading!);
+            GUILayout.Label("Pack-local cached images; the source GLB is not required.");
+            if (GUILayout.Button("Choose cached asset")) { OpenArtLibrary(); GUIUtility.ExitGUI(); }
         }
         else
         {
@@ -1300,11 +1242,13 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             DrawAssetPath(
                 "GLB model",
                 item.model ?? "",
-                value => item.model = value,
+                value => { item.model = value; item.artOriginalName = null; },
                 () => BrowseModelAsset(
                     value => item.model = value));
+            if (!string.IsNullOrWhiteSpace(item.artOriginalName))
+                GUILayout.Label(item.artOriginalName, editorMuted!);
+            BeginField("Rotation X / Y / Z");
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Rotation X / Y / Z", GUILayout.Width(145));
             item.icon.rotation ??= new[] { 20f, 135f, 0f };
             if (item.icon.rotation.Length != 3)
                 item.icon.rotation = new[] { 20f, 135f, 0f };
@@ -1315,8 +1259,10 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                     "icon.rotation." + axis,
                     item.icon.rotation[axis],
                     value => item.icon.rotation[captured] = value);
+                if (axis < 2) GUILayout.Space(12);
             }
             GUILayout.EndHorizontal();
+            EndField();
             DrawColumnPair(
                 () => DrawFloat(
                     "Zoom",
@@ -1328,8 +1274,8 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                     "icon.resolution",
                     item.icon.resolution,
                     value => item.icon.resolution = value));
-            GUILayout.Label(
-                "GLBs are imported into BepInEx/config/CustomItemLoaderModels/" +
+            DrawHelp(
+                "GLBs are imported into BepInEx/shared/ArtLibrary/models/ " +
                 "as shared authoring sources with readable names plus a short " +
                 "content hash, outside every pack. Several items or packs can " +
                 "reference one model. " +
@@ -1340,9 +1286,6 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         }
 
         GUILayout.Space(5);
-        if (DrawFoldout(
-                "Preview canvases",
-                ref appearancePreviewExpanded))
         {
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Refresh Preview"))
@@ -1355,82 +1298,19 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             if (GUILayout.Button("Clear Preview"))
                 ClearPreview();
             GUILayout.EndHorizontal();
-            DrawPreview();
+            GUI.enabled = preview != null;
+            if (GUILayout.Button("Add current art to shared library")) PublishCurrentArt();
+            GUI.enabled = true;
+            if (IsGeneratedPrefabPlacement(item) && item.furniture?.turnable == true)
+                DrawFurnitureRotations(item, item.furniture);
         }
     }
 
-    private void DrawPreview()
-    {
-        GUILayout.BeginHorizontal();
-        GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("Inventory icon");
-        DrawPreviewBox(preview, placed: false);
-        if (preview != null)
-            GUILayout.Label(
-                $"{preview.texture.width} × {preview.texture.height} px");
-        GUILayout.EndVertical();
-
-        GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("Placement mode");
-        ItemDefinition? definition = CurrentItem;
-        if (definition != null &&
-            IsGeneratedPrefabPlacement(definition) &&
-            definition.furniture?.turnable == true)
-            DrawChoice(
-                "Rotation view",
-                FurnitureRotationNames[furniturePreviewRotation],
-                FurnitureRotationNames,
-                value =>
-                {
-                    furniturePreviewRotation =
-                        IndexOf(FurnitureRotationNames, value);
-                    RefreshPlacementPreview();
-                });
-        DrawPreviewBox(placementPreview, placed: true);
-        if (placementPreview != null)
-        {
-            GUILayout.Label(
-                $"{placementPreview.texture.width} × " +
-                $"{placementPreview.texture.height} px at " +
-                $"{placementPreview.pixelsPerUnit:0.###} PPU");
-            GUILayout.Label(
-                "World size: " +
-                $"{placementPreview.rect.width / placementPreview.pixelsPerUnit:0.###}" +
-                " × " +
-                $"{placementPreview.rect.height / placementPreview.pixelsPerUnit:0.###}" +
-                " tiles; grass reference: 1 × 1 tile.");
-        }
-        GUILayout.Label(
-            "Item and grass use one shared world-space display scale.");
-        if (!string.IsNullOrWhiteSpace(placementPreviewNote))
-            GUILayout.Label(placementPreviewNote);
-        if (definition != null &&
-            IsGeneratedPrefabPlacement(definition) &&
-            definition.furniture?.bed == true)
-            GUILayout.Label("Interaction: Sleep (native Silverpine bed)");
-        if (definition != null &&
-            !IsClonedPrefabPlacement(definition) &&
-            !definition.workbench?.Equals(
-                nameof(CustomItemWorkbenchType.None),
-                StringComparison.OrdinalIgnoreCase) == true)
-            GUILayout.Label(
-                IsGeneratedPrefabPlacement(definition)
-                    ? $"Interaction: Use {definition.workbench} (prefab adapter)"
-                    : $"Interactions: Take + Use {definition.workbench}");
-        if (definition?.light?.enabled == true)
-            GUILayout.Label(
-                "Always-on lantern light: " +
-                $"radius {definition.light.radius:0.###}, " +
-                $"intensity {definition.light.intensity:0.###}, " +
-                (definition.light.flicker ? "flickering" : "steady"));
-        GUILayout.EndVertical();
-        GUILayout.EndHorizontal();
-    }
 
     private void DrawPreviewBox(Sprite? sprite, bool placed)
     {
         Rect rect = GUILayoutUtility.GetRect(
-            200, 290, 220, 290, GUILayout.ExpandWidth(true));
+            200, 400, 320, 400, GUILayout.ExpandWidth(true));
         Color old = GUI.color;
         GUI.color = placed
             ? new Color(0.11f, 0.16f, 0.13f, 1f)
@@ -1451,42 +1331,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             return;
         }
 
-        float pixelsPerUnit = Mathf.Max(0.001f, sprite.pixelsPerUnit);
-        float worldWidth = sprite.rect.width / pixelsPerUnit;
-        float worldHeight = sprite.rect.height / pixelsPerUnit;
-        float sceneWorldWidth = Mathf.Max(1f, worldWidth);
-        float sceneWorldHeight = Mathf.Max(1f, worldHeight + 0.5f);
-        float fit = Mathf.Min(
-            1f,
-            (rect.width * 0.86f) /
-            (sceneWorldWidth * TerrainTileScreenSize),
-            (rect.height * 0.78f) /
-            (sceneWorldHeight * TerrainTileScreenSize));
-        float tileSize = TerrainTileScreenSize * fit;
-        float width = worldWidth * tileSize;
-        float height = worldHeight * tileSize;
-        Rect tileRect = new(
-            rect.center.x - tileSize * 0.5f,
-            rect.yMax - tileSize - 18f,
-            tileSize,
-            tileSize);
-        DrawGrassTerrainTile(tileRect);
-        Rect spriteRect = new(
-            rect.center.x - width * 0.5f,
-            tileRect.center.y - height,
-            width,
-            height);
-        GUI.color = new Color(0f, 0f, 0f, 0.38f);
-        GUI.DrawTexture(
-            new Rect(
-                spriteRect.center.x - width * 0.32f,
-                spriteRect.yMax - 5f,
-                width * 0.64f,
-                Mathf.Max(5f, height * 0.08f)),
-            Texture2D.whiteTexture);
-        GUI.color = Color.white;
-        DrawSpriteTexture(sprite, spriteRect);
-        GUI.color = old;
+        DrawWorldPlacement(sprite, rect);
     }
 
     private void DrawGrassTerrainTile(Rect rect)
@@ -1602,14 +1447,15 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         Action<string> assign,
         Action browse)
     {
+        BeginField(label);
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(145));
         string next = DrawWrappedTextInput(value);
         if (next != value)
             assign(next);
-        if (GUILayout.Button("Browse", GUILayout.Width(75)))
+        if (DrawActionButton("Browse", 75))
             browse();
         GUILayout.EndHorizontal();
+        EndField();
     }
 
     private void DrawLightSettings(
@@ -1626,7 +1472,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
 
         if (item.light == null || !item.light.enabled)
         {
-            GUILayout.Label(supportsAdapters
+            DrawHelp(supportsAdapters
                 ? "Optional Silverpine-style area light for this placed object."
                 : "Always-on lights require Sprite or GeneratedPrefab placement.");
             return;
@@ -1635,8 +1481,8 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         item.light.color ??= new[] { 1f, 0.68f, 0.41f };
         if (item.light.color.Length != 3)
             item.light.color = new[] { 1f, 0.68f, 0.41f };
+        BeginField("Light color R / G / B");
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Light color R / G / B", GUILayout.Width(145));
         for (int channel = 0; channel < 3; channel++)
         {
             int captured = channel;
@@ -1644,8 +1490,10 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 "light.color." + channel,
                 item.light.color[channel],
                 value => item.light.color[captured] = value);
+            if (channel < 2) GUILayout.Space(12);
         }
         GUILayout.EndHorizontal();
+        EndField();
         DrawColumnPair(
             () => DrawFloat(
                 "Light radius",
@@ -1679,6 +1527,9 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 value =>
                 {
                     furniture.turnable = value;
+                    if (value && item.cachedArtRotations != null)
+                        furniture.rotationSprites = JsonConvert.DeserializeObject<FurnitureRotationSpritesDefinition>(
+                            JsonConvert.SerializeObject(item.cachedArtRotations));
                     if (!value)
                     {
                         furniture.rotationSprites = null;
@@ -1702,7 +1553,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             furniture.snappingOffset,
             value => furniture.snappingOffset = value);
         if (furniture.turnable)
-            DrawFurnitureRotations(item, furniture);
+            GUILayout.Label("Edit directional art under Appearance; position each view in the World preview.");
         GUILayout.Label(
             "Turnable cycles Front → Right → Back → Left. Bed uses " +
             "Silverpine's native Sleep rules. The generated prefab returns " +
@@ -1746,8 +1597,9 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         }
 
         furniture.glbRotations = null;
-        furniture.rotationSprites ??=
-            new FurnitureRotationSpritesDefinition();
+        furniture.rotationSprites ??= item.cachedArtRotations == null
+            ? new FurnitureRotationSpritesDefinition()
+            : JsonConvert.DeserializeObject<FurnitureRotationSpritesDefinition>(JsonConvert.SerializeObject(item.cachedArtRotations))!;
         FurnitureRotationSpritesDefinition sprites =
             furniture.rotationSprites;
         GUILayout.Label(
@@ -1792,12 +1644,11 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         string value,
         Action<string> assign)
     {
-        GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(145));
+        BeginField(label);
         string next = DrawWrappedTextInput(value);
         if (next != value)
             assign(next);
-        GUILayout.EndHorizontal();
+        EndField();
     }
 
     private void DrawInt(
@@ -1806,20 +1657,19 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         int value,
         Action<int> assign)
     {
-        GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(145));
+        BeginField(label);
         string text = NumberText(
             key,
             value.ToString(CultureInfo.InvariantCulture));
-        string next = DrawWrappedTextInput(text);
+        string next = GUILayout.TextField(text, GUILayout.MinWidth(80), GUILayout.MinHeight(EditorFormLayout.ControlHeight));
         numberText[key] = next;
         if (int.TryParse(
                 next,
                 NumberStyles.Integer,
                 CultureInfo.InvariantCulture,
-                out int parsed))
+                out int parsed) && parsed != value)
             assign(parsed);
-        GUILayout.EndHorizontal();
+        EndField();
     }
 
     private void DrawFloat(
@@ -1828,10 +1678,9 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         float value,
         Action<float> assign)
     {
-        GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(145));
+        BeginField(label);
         DrawFloatInline(key, value, assign);
-        GUILayout.EndHorizontal();
+        EndField();
     }
 
     private void DrawFloatInline(
@@ -1841,14 +1690,14 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
     {
         string text = NumberText(
             key,
-            value.ToString("0.###", CultureInfo.InvariantCulture));
-        string next = DrawWrappedTextInput(text, minimumWidth: 55f);
+            value.ToString("R", CultureInfo.InvariantCulture));
+        string next = GUILayout.TextField(text, GUILayout.MinWidth(80), GUILayout.MinHeight(EditorFormLayout.ControlHeight));
         numberText[key] = next;
         if (float.TryParse(
                 next,
                 NumberStyles.Float,
                 CultureInfo.InvariantCulture,
-                out float parsed))
+                out float parsed) && VisualRules.Changed(value, parsed))
             assign(parsed);
     }
 
@@ -1883,6 +1732,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             next = GUILayout.TextArea(
                 value,
                 wrappedTextAreaStyle,
+                GUILayout.MinWidth(0),
                 GUILayout.MinHeight(minimumHeight),
                 GUILayout.ExpandWidth(true),
                 GUILayout.ExpandHeight(false));
@@ -1902,6 +1752,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 value,
                 wrappedTextAreaStyle,
                 GUILayout.ExpandWidth(true),
+                GUILayout.MinWidth(0),
                 GUILayout.ExpandHeight(false));
         }
 
@@ -1916,34 +1767,66 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         IReadOnlyList<string> values,
         Action<string> assign)
     {
+        BeginField(label);
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(145));
         int index = IndexOf(values, current);
-        if (GUILayout.Button("◀", GUILayout.Width(ChoiceArrowWidth)))
+        if (DrawActionButton("◀", GetChoiceArrowWidth()))
             assign(values[(index - 1 + values.Count) % values.Count]);
-        float valueWidth = ChoiceMinimumValueWidth;
-        for (int i = 0; i < values.Count; i++)
-            valueWidth = Mathf.Max(
-                valueWidth,
-                GUI.skin.label.CalcSize(new GUIContent(values[i])).x + 12f);
-        valueWidth = Mathf.Min(valueWidth, ChoiceMaximumValueWidth);
-        GUILayout.Label(values[index], GUILayout.Width(valueWidth));
-        if (GUILayout.Button("▶", GUILayout.Width(ChoiceArrowWidth)))
+        DrawChoiceValue(values[index], values);
+        if (DrawActionButton("▶", GetChoiceArrowWidth()))
             assign(values[(index + 1) % values.Count]);
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
+        EndField();
     }
 
-    private static void DrawColumnPair(Action left, Action right)
+    private void DrawChoiceValue(string selected, IReadOnlyList<string> values)
     {
+        // Measure and paint with exactly the same style (font AND padding).
+        // Measuring GUI.skin.label then painting a padded textArea made even
+        // "Miscellaneous" and "Automatic" wrap their final character.
+        GUIStyle style = editorValue!;
+        float measured = ChoiceMinimumValueWidth;
+        for (int i = 0; i < values.Count; i++)
+            measured = Mathf.Max(measured, Mathf.Ceil(style.CalcSize(new GUIContent(values[i])).x) + 4f);
+        float width = EditorFormLayout.ChoiceWidth(formWidth,
+            Mathf.Min(measured, ChoiceMaximumValueWidth), GetChoiceArrowWidth());
+        GUIContent content = new(selected);
+        float height = EditorFormLayout.ChoiceHeight(style.CalcHeight(content, width));
+        GUILayout.Space(6);
+        // Explicit height also covers unusually long addon slot names at the
+        // bounded width. The row grows downward instead of hiding lines.
+        GUILayout.Label(content, style, GUILayout.Width(width), GUILayout.Height(height));
+        GUILayout.Space(6);
+    }
+
+    private float GetChoiceArrowWidth() =>
+        Mathf.Max(ChoiceArrowWidth, editorAction!.CalcSize(new GUIContent("◀")).x + 12f,
+            editorAction.CalcSize(new GUIContent("▶")).x + 12f);
+
+    private void DrawColumnPair(Action left, Action right)
+    {
+        float available = formWidth;
+        if (!EditorFormLayout.UseColumns(available))
+        {
+            left();
+            right();
+            return;
+        }
+        float column = EditorFormLayout.ColumnWidth(available);
         GUILayout.BeginHorizontal();
-        GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
-        left();
-        GUILayout.EndVertical();
-        GUILayout.Space(24f);
-        GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
-        right();
-        GUILayout.EndVertical();
+        try
+        {
+            formWidth = column;
+            GUILayout.BeginVertical(GUILayout.Width(column));
+            left();
+            GUILayout.EndVertical();
+            GUILayout.Space(EditorFormLayout.ColumnGap);
+            GUILayout.BeginVertical(GUILayout.Width(column));
+            right();
+            GUILayout.EndVertical();
+        }
+        finally { formWidth = available; }
         GUILayout.EndHorizontal();
     }
 
@@ -1975,14 +1858,19 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
 
     private void CreateNewPack()
     {
+        string id = "my.item.pack";
+        for (int suffix = 2; documents.Any(p => string.Equals(p.Pack.packId, id, StringComparison.OrdinalIgnoreCase)) ||
+             File.Exists(PackFileStore.NewPackPath(Plugin.DefinitionDirectory, id)); suffix++)
+            id = "my.item.pack." + suffix;
         document = new PackDocument
         {
             Pack = new ItemPackDefinition
             {
-                packId = "my.item.pack",
+                packId = id,
                 items = new List<ItemDefinition?> { NewItem() }
             }
         };
+        documents.Add(document);
         selectedItem = 0;
         SelectionChanged();
         status =
@@ -2008,11 +1896,34 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             JsonConvert.SerializeObject(CurrentItem));
         if (copy == null)
             return;
-        copy.id = (copy.id ?? "item") + "_copy";
-        copy.name = (copy.name ?? "Item") + " Copy";
-        document.Pack.items.Add(copy);
-        selectedItem = document.Pack.items.Count - 1;
-        SelectionChanged();
+        string sourceId = copy.id ?? "item";
+        string sourceName = copy.name ?? "Item";
+        copy.id = sourceId + "_copy";
+        copy.name = sourceName + " Copy";
+        for (int suffix = 2; document.Pack.items.Any(i =>
+                 string.Equals(i?.id, copy.id, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(i?.name, copy.name, StringComparison.OrdinalIgnoreCase)); suffix++)
+        {
+            copy.id = sourceId + "_copy" + suffix;
+            copy.name = sourceName + " Copy " + suffix;
+        }
+        try
+        {
+            if (!copy.useCloneVisuals && !string.IsNullOrWhiteSpace(copy.model))
+            {
+                string folder = GetPackFolder();
+                if (!File.Exists(ItemPackLoader.ResolveModelSourcePath(folder, copy.model!, false)))
+                    ValidateDistributionCaches(CurrentItem!);
+                foreach (string variant in new[] { "", "__furniture_front", "__furniture_right", "__furniture_back", "__furniture_left" })
+                    AssetFiles.CopyCache(
+                        ItemPackLoader.FindReadableGlbCachePath(folder, document.Pack.packId!, sourceId, variant),
+                        ItemPackLoader.GetGlbCachePath(folder, document.Pack.packId!, copy.id, variant));
+            }
+            document.Pack.items.Add(copy);
+            selectedItem = document.Pack.items.Count - 1;
+            SelectionChanged();
+        }
+        catch (Exception error) { status = "Duplicate failed: " + error.Message; }
     }
 
     private static ItemDefinition NewItem() => new()
@@ -2046,11 +1957,13 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         {
             try
             {
+                string sourceText = File.ReadAllText(path);
                 ItemPackDefinition? pack =
                     JsonConvert.DeserializeObject<ItemPackDefinition>(
-                        File.ReadAllText(path));
+                        sourceText);
                 if (pack != null)
-                    documents.Add(new PackDocument { Path = path, Pack = pack });
+                    documents.Add(new PackDocument { Path = path, Pack = pack,
+                        SourceText = sourceText, SavedSnapshot = JsonConvert.SerializeObject(pack) });
             }
             catch (Exception exception)
             {
@@ -2093,6 +2006,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
 
     private void SelectionChanged()
     {
+        CancelOffsetDrag();
         numberText.Clear();
         furniturePreviewRotation = 0;
         cloneSearch = "";
@@ -2109,6 +2023,12 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
 
         try
         {
+            // Check destination ownership before validation creates any caches.
+            string destination = string.IsNullOrWhiteSpace(document.Path)
+                ? PackFileStore.NewPackPath(Plugin.DefinitionDirectory, document.Pack.packId ?? "")
+                : document.Path;
+            if (document.SourceText == null && File.Exists(destination))
+                throw new IOException("A pack already exists at this location. Select that pack to edit it, or choose a different pack ID.");
             document.Pack.Validate(
                 string.IsNullOrWhiteSpace(document.Path)
                     ? "new pack"
@@ -2135,6 +2055,15 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                             $"Item '{item.id}' has componentOverrides but no " +
                             "valid clone item.");
                     item.componentOverrides.ValidateAgainst(source);
+                    string? ammoName = item.componentOverrides.rangedWeapon?.ammunitionItem?.Trim();
+                    if (!string.IsNullOrWhiteSpace(ammoName))
+                    {
+                        ItemDefinition? localAmmo = document.Pack.items.FirstOrDefault(i => i?.name == ammoName);
+                        Item? ammo = localAmmo != null ? GetCloneTemplate(localAmmo) :
+                            ItemLibrary.Items.FirstOrDefault(i => i != null && i.name == ammoName);
+                        if (ammo?.GetItemComponent<ItemComponent_Charges>() == null)
+                            throw new InvalidDataException($"Item '{item.id}': ammunition '{ammoName}' must inherit ItemComponent_Charges (for example a quiver).");
+                    }
                 }
                 if (item.attributeModifiers != null)
                 {
@@ -2184,15 +2113,6 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 ValidateAsset(item);
             }
 
-            if (string.IsNullOrWhiteSpace(document.Path))
-            {
-                string folder = Path.Combine(
-                    Plugin.DefinitionDirectory,
-                    SafeFileName(document.Pack.packId!));
-                Directory.CreateDirectory(folder);
-                document.Path = Path.Combine(folder, "items.json");
-            }
-
             string json = JsonConvert.SerializeObject(
                 document.Pack,
                 Formatting.Indented,
@@ -2200,12 +2120,13 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 {
                     NullValueHandling = NullValueHandling.Ignore
                 });
-            string temporary = document.Path + ".tmp";
-            File.WriteAllText(temporary, json);
-            File.Copy(temporary, document.Path, overwrite: true);
-            File.Delete(temporary);
+            PackFileStore.Save(destination, json, document.SourceText);
+            document.Path = destination;
+            document.SourceText = json;
+            document.SavedSnapshot = JsonConvert.SerializeObject(document.Pack);
             string saved = Path.GetFileName(document.Path);
-            RefreshDocuments();
+            // Keep other documents (and their unsaved edits) in memory.
+            numberText.Clear();
             status =
                 $"Saved {saved}. Restart Silverpine to register changes.";
         }
@@ -2322,7 +2243,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 "A cache-only GLB item requires valid pack and item IDs.");
 
         string folder = GetPackFolder();
-        string mainCache = ItemPackLoader.GetGlbCachePath(
+        string mainCache = ItemPackLoader.FindReadableGlbCachePath(
             folder,
             packId,
             item.id!);
@@ -2339,7 +2260,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         {
             string rotationName =
                 FurnitureRotationNames[rotationIndex].ToLowerInvariant();
-            string cache = ItemPackLoader.GetGlbCachePath(
+            string cache = ItemPackLoader.FindReadableGlbCachePath(
                 folder,
                 packId,
                 item.id!,
@@ -2376,17 +2297,10 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 try
                 {
                     string folder = GetPackFolder();
-                    string assets = Path.Combine(folder, "assets");
-                    Directory.CreateDirectory(assets);
-                    string destination =
-                        Path.Combine(assets, Path.GetFileName(selected));
-                    if (!Path.GetFullPath(selected).Equals(
-                            Path.GetFullPath(destination),
-                            StringComparison.OrdinalIgnoreCase))
-                        File.Copy(selected, destination, overwrite: true);
-                    string relative = MakeRelativePath(folder, destination)
-                        .Replace(Path.DirectorySeparatorChar, '/');
+                    string relative = SharedArtApi.ImportImage(selected, folder);
                     assign(relative);
+                    if (CurrentItem?.image == relative)
+                        CurrentItem.artOriginalName = Path.GetFileNameWithoutExtension(selected);
                     RefreshPreview();
                     status = "Imported asset as " + relative;
                 }
@@ -2427,6 +2341,8 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                         string relative =
                             ItemPackLoader.ImportModelSource(selected);
                         assign(relative);
+                        if (CurrentItem != null)
+                            CurrentItem.artOriginalName = SharedArtLibrary.OriginalModelName(selected);
                         RefreshPreview();
                         status =
                             "Imported shared authoring model as " + relative;
@@ -2489,7 +2405,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             else if (!string.IsNullOrWhiteSpace(item.model))
             {
                 string packId = document?.Pack.packId ?? "";
-                string cache = ItemPackLoader.GetGlbCachePath(
+                string cache = ItemPackLoader.FindReadableGlbCachePath(
                     GetPackFolder(),
                     packId,
                     item.id ?? "");
@@ -2535,41 +2451,62 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
             return;
         }
 
+        if (generatingPreview) return;
+        int generation = ++previewGeneration;
+        PackDocument? sourceDocument = document;
+        string sourceJson;
+        ItemDefinition snapshot;
+        string packFolder;
+        try
+        {
+            sourceJson = JsonConvert.SerializeObject(item);
+            snapshot = JsonConvert.DeserializeObject<ItemDefinition>(sourceJson)!;
+            packFolder = GetPackFolder();
+        }
+        catch (Exception exception)
+        {
+            status = "Cannot prepare GLB preview: " + exception.Message;
+            return;
+        }
+        string packId = document?.Pack.packId ?? "";
+        string? documentPath = document?.Path;
+        var identity = new PreviewIdentity(sourceDocument, item, packId, documentPath, sourceJson, generation);
+        bool IsCurrent() => open && identity.Matches(document, CurrentItem,
+            document?.Pack.packId, document?.Path, JsonConvert.SerializeObject(item), previewGeneration);
+        void CheckCurrent()
+        {
+            if (!IsCurrent()) throw new OperationCanceledException("Preview settings or selection changed. Render again when ready.");
+        }
         generatingPreview = true;
         status = "Rendering GLB preview…";
         var renderedSprites = new List<Sprite>();
+        var pendingCaches = new List<PendingGlb>();
+        bool transferred = false;
         try
         {
             IconDefinition primarySettings =
-                item.icon ?? new IconDefinition();
-            string packFolder = GetPackFolder();
+                snapshot.icon ?? new IconDefinition();
             string modelPath = ItemPackLoader.ResolveModelSourcePath(
                 packFolder,
-                item.model!);
-            string packId = document?.Pack.packId ?? "";
+                snapshot.model!);
             if (string.IsNullOrWhiteSpace(packId) ||
-                string.IsNullOrWhiteSpace(item.id))
+                string.IsNullOrWhiteSpace(snapshot.id))
                 throw new InvalidDataException(
                     "Save valid pack and item IDs before rendering caches.");
+            pendingCaches.Add(ItemPackLoader.CreatePendingGlb(
+                packFolder, packId, snapshot.id!, modelPath, primarySettings,
+                "custom_item_editor_preview"));
             Sprite rendered = await GlbThumbnailRenderer.RenderAsync(
                 modelPath,
                 primarySettings,
                 "custom_item_editor_preview");
             renderedSprites.Add(rendered);
-            ItemPackLoader.WriteCachedSprite(
-                ItemPackLoader.CreatePendingGlb(
-                    packFolder,
-                    packId,
-                    item.id!,
-                    modelPath,
-                    primarySettings,
-                    "custom_item_editor_preview"),
-                rendered);
-            if (IsGeneratedPrefabPlacement(item) &&
-                item.furniture?.turnable == true)
+            CheckCurrent();
+            if (IsGeneratedPrefabPlacement(snapshot) &&
+                snapshot.furniture?.turnable == true)
             {
                 FurnitureGlbRotationsDefinition rotations =
-                    item.furniture.glbRotations ??
+                    snapshot.furniture.glbRotations ??
                     new FurnitureGlbRotationsDefinition();
                 for (int rotationIndex = 1; rotationIndex < 4; rotationIndex++)
                 {
@@ -2580,27 +2517,28 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                     string rotationName =
                         FurnitureRotationNames[rotationIndex]
                             .ToLowerInvariant();
+                    pendingCaches.Add(ItemPackLoader.CreatePendingGlb(
+                        packFolder, packId, snapshot.id!, modelPath, settings,
+                        "custom_item_editor_preview_" + rotationName,
+                        "__furniture_" + rotationName, updatesMainSprite: false,
+                        furnitureRotationIndex: rotationIndex));
                     Sprite directional =
                         await GlbThumbnailRenderer.RenderAsync(
                             modelPath,
                             settings,
                             "custom_item_editor_preview_" + rotationName);
                     renderedSprites.Add(directional);
-                    ItemPackLoader.WriteCachedSprite(
-                        ItemPackLoader.CreatePendingGlb(
-                            packFolder,
-                            packId,
-                            item.id!,
-                            modelPath,
-                            settings,
-                            "custom_item_editor_preview_" + rotationName,
-                            "__furniture_" + rotationName,
-                            updatesMainSprite: false,
-                            furnitureRotationIndex: rotationIndex),
-                        directional);
+                    CheckCurrent();
                 }
             }
-            ClearPreview();
+            CheckCurrent();
+            // Publish only after every asynchronous render has completed for
+            // the same immutable settings, item and pack identity.
+            for (int index = 0; index < renderedSprites.Count; index++)
+                ItemPackLoader.WriteCachedSprite(pendingCaches[index], renderedSprites[index]);
+            try { PublishItemArt(snapshot, packFolder, packId); }
+            catch (Exception error) { Plugin.Log.LogWarning("Rendered pack cache is ready, but shared art publishing failed: " + error.Message); }
+            ClearPreview(invalidateRender: false);
             preview = rendered;
             for (int index = 0; index < renderedSprites.Count; index++)
             {
@@ -2609,43 +2547,42 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 previewObjects.Add(directional);
                 previewObjects.Add(directional.texture);
             }
+            transferred = true;
             RefreshPlacementPreview();
             status = renderedSprites.Count == 4
                 ? "Rendered and cached Front, Right, Back, and Left GLB previews."
                 : "GLB preview rendered and cached for distribution.";
         }
+        catch (OperationCanceledException)
+        {
+            if (generation == previewGeneration && open)
+                status = "Settings changed; discarded the old render. Render the preview again.";
+        }
         catch (Exception exception)
         {
-            foreach (Sprite rendered in renderedSprites)
-            {
-                if (rendered != null)
-                Destroy(rendered);
-                if (rendered?.texture != null)
-                    Destroy(rendered.texture);
-            }
-            status = "GLB preview failed: " + exception.Message;
+            if (IsCurrent()) status = "GLB preview failed: " + exception.Message;
             Plugin.Log.LogError(
                 "Item editor GLB preview failed: " + exception);
         }
         finally
         {
+            if (!transferred)
+                foreach (Sprite rendered in renderedSprites)
+                {
+                    if (rendered == null) continue;
+                    Texture2D texture = rendered.texture;
+                    Destroy(rendered);
+                    if (texture != null) Destroy(texture);
+                }
             generatingPreview = false;
         }
     }
 
     private Sprite LoadPreviewSprite(string path)
     {
-        Texture2D texture = new(2, 2, TextureFormat.ARGB32, false);
-        if (!texture.LoadImage(File.ReadAllBytes(path), false))
-            throw new InvalidDataException("Unity could not decode " + path);
-        texture.filterMode = FilterMode.Point;
-        Sprite sprite = Sprite.Create(
-            texture,
-            new Rect(0, 0, texture.width, texture.height),
-            new Vector2(0.5f, 0.5f),
-            32f);
+        Sprite sprite = ExternalSpriteLoader.Load(path, Path.GetFileName(path));
         previewObjects.Add(sprite);
-        previewObjects.Add(texture);
+        previewObjects.Add(sprite.texture);
         return sprite;
     }
 
@@ -2678,7 +2615,7 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         {
             string rotationName =
                 FurnitureRotationNames[rotationIndex].ToLowerInvariant();
-            string cache = ItemPackLoader.GetGlbCachePath(
+            string cache = ItemPackLoader.FindReadableGlbCachePath(
                 folder,
                 packId,
                 item.id ?? "",
@@ -2689,8 +2626,9 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         }
     }
 
-    private void ClearPreview()
+    private void ClearPreview(bool invalidateRender = true)
     {
+        if (invalidateRender) previewGeneration++;
         ClearPlacementPreview();
         preview = null;
         for (int index = 0;
@@ -2749,6 +2687,23 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
                 "Silverpine's furniture placement system. " +
                 $"View: {FurnitureRotationNames[furniturePreviewRotation]}; " +
                 $"placement scale: {placementScale:0.###}×.";
+            return;
+        }
+
+        if (definition.useCloneVisuals && clone != null && SpinningItemManager.Instance != null &&
+            SpinningItemManager.Instance.Has3DModel(clone))
+        {
+            Sprite native = SpinningItemManager.Instance.GetPreview(clone, fortyFiveView: true, orthographic: true);
+            if (native != null) placementPreview = CreatePlacementScalePreview(native, placementScale);
+            placementPreviewNote = "Inherited native 3D placement view; custom visual offset is relative to its pivot.";
+            return;
+        }
+
+        if ((!definition.useCloneVisuals && !string.IsNullOrWhiteSpace(definition.model)) ||
+            (definition.useCloneVisuals && clone != null && Plugin.GlbVisualSpriteKeys.Contains(clone.spriteName)))
+        {
+            placementPreview = CreatePlacementScalePreview(preview, placementScale);
+            placementPreviewNote = "GLB art uses the same full-size placement visual with or without its source model.";
             return;
         }
 
@@ -2831,9 +2786,10 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
         string id = string.IsNullOrWhiteSpace(document.Pack.packId)
             ? "new-item-pack"
             : document.Pack.packId!;
-        string folder = Path.Combine(
-            Plugin.DefinitionDirectory,
-            SafeFileName(id));
+        string path = PackFileStore.NewPackPath(Plugin.DefinitionDirectory, id);
+        if (File.Exists(path))
+            throw new IOException("This pack ID already belongs to a saved pack. Select that pack or choose a different ID.");
+        string folder = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(folder);
         return folder;
     }
@@ -2886,6 +2842,43 @@ internal sealed class CustomItemEditorUI : ModToolBehaviour
 
     private void Close()
     {
+        CancelOffsetDrag();
+        if (documents.Any(p => p.HasUnsavedChanges)) { closeConfirmation = true; return; }
+        CloseImmediately();
+    }
+
+    private bool HandleEscapeRequest()
+    {
+        if (filePickerOpen)
+        {
+            if (GenericListUI.Instance != null) GenericListUI.Instance.Close();
+            EndFilePickerModal();
+        }
+        else if (draggedItem != null) CancelOffsetDrag();
+        else if (closeConfirmation) closeConfirmation = false;
+        else if (assetLibraryOpen) assetLibraryOpen = false;
+        else Close();
+        return true;
+    }
+
+    protected override void OnFrameworkSessionClosed()
+    {
+        open = false;
+        indexingArt = false;
+        CancelOffsetDrag();
+        if (filePickerOpen && GenericListUI.Instance != null) GenericListUI.Instance.Close();
+        EndFilePickerModal();
+        ClearPreview();
+        base.OnFrameworkSessionClosed();
+    }
+
+    private void CloseImmediately()
+    {
+        CancelOffsetDrag();
+        closeConfirmation = false;
+        StopAllCoroutines();
+        indexingArt = false;
+        ClearLibraryThumbnails();
         EndFilePickerModal();
         open = false;
         ClearPreview();

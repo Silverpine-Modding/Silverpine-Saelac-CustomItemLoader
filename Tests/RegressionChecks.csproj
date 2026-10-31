@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>CS0649;CS0414;CS8602</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <Reference Include="Mono.Cecil"><HintPath>..\..\..\BepInEx\core\Mono.Cecil.dll</HintPath></Reference>
+    <Compile Include="..\AssetFiles.cs" Link="Production\AssetFiles.cs" />
+    <Compile Include="..\PackFileStore.cs" Link="Production\PackFileStore.cs" />
+    <Compile Include="..\VisualRules.cs" Link="Production\VisualRules.cs" />
+    <Compile Include="..\EditorFormLayout.cs" Link="Production\EditorFormLayout.cs" />
+    <Compile Include="..\CustomEnchantmentSafety.cs" Link="Production\CustomEnchantmentSafety.cs" />
+    <Compile Include="..\MarketStockRecovery.cs" Link="Production\MarketStockRecovery.cs" />
+    <Compile Include="..\PlacementOffsets.cs" Link="Production\PlacementOffsets.cs" />
+    <Compile Include="..\SharedArtLibrary.cs" Link="Production\SharedArtLibrary.cs" />
+    <Compile Include="..\..\ModdingTools\SharedArtLibrary.cs" Link="Framework\SharedArtLibrary.cs" />
+    <Compile Include="..\..\ModdingTools\SharedArtFiles.cs" Link="Framework\SharedArtFiles.cs" />
+    <Compile Include="..\PreviewIdentity.cs" Link="Production\PreviewIdentity.cs" />
+    <Compile Include="..\EquippedItemState.cs" Link="Production\EquippedItemState.cs" />
+    <Compile Include="..\BasicAttributeModifierRuntime.cs" Link="Production\BasicAttributeModifierRuntime.cs" />
+    <Compile Include="..\CustomAmmunitionSafety.cs" Link="Production\CustomAmmunitionSafety.cs" />
+    <Compile Include="..\..\AttributeExpansion\CappedArmorValue.cs" Link="Production\CappedArmorValue.cs" />
+    <Compile Include="..\..\AttributeExpansion\ArmorPersistence.cs" Link="Production\ArmorPersistence.cs" />
+  </ItemGroup>
+</Project>
