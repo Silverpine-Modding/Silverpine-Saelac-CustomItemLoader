@@ -11,6 +11,8 @@
     <Reference Include="Mono.Cecil"><HintPath>..\..\..\BepInEx\core\Mono.Cecil.dll</HintPath></Reference>
     <Compile Include="..\AssetFiles.cs" Link="Production\AssetFiles.cs" />
     <Compile Include="..\PackFileStore.cs" Link="Production\PackFileStore.cs" />
+    <Compile Include="..\PackWorkspace.cs" Link="Production\PackWorkspace.cs" />
+    <Compile Include="..\PackCacheIdentity.cs" Link="Production\PackCacheIdentity.cs" />
     <Compile Include="..\VisualRules.cs" Link="Production\VisualRules.cs" />
     <Compile Include="..\EditorFormLayout.cs" Link="Production\EditorFormLayout.cs" />
     <Compile Include="..\CustomEnchantmentSafety.cs" Link="Production\CustomEnchantmentSafety.cs" />

@@ -73,6 +73,7 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
     private sealed class PackDocument
     {
         internal string Path = "";
+        internal PackWorkspace Workspace = new();
         internal ItemPackDefinition Pack = new();
         internal string? SourceText;
         internal string SavedSnapshot = "";
@@ -1854,7 +1855,8 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
     {
         string id = "my.item.pack";
         for (int suffix = 2; documents.Any(p => string.Equals(p.Pack.packId, id, StringComparison.OrdinalIgnoreCase)) ||
-             File.Exists(PackFileStore.NewPackPath(Plugin.DefinitionDirectory, id)); suffix++)
+             Directory.Exists(Path.GetDirectoryName(PackFileStore.NewPackPath(Plugin.DefinitionDirectory, id))) ||
+             File.Exists(Path.GetDirectoryName(PackFileStore.NewPackPath(Plugin.DefinitionDirectory, id))); suffix++)
             id = "my.item.pack." + suffix;
         document = new PackDocument
         {
@@ -1956,7 +1958,7 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
                     JsonConvert.DeserializeObject<ItemPackDefinition>(
                         sourceText);
                 if (pack != null)
-                    documents.Add(new PackDocument { Path = path, Pack = pack,
+                    documents.Add(new PackDocument { Path = path, Pack = pack, Workspace = new PackWorkspace(path, pack.packId),
                         SourceText = sourceText, SavedSnapshot = JsonConvert.SerializeObject(pack) });
             }
             catch (Exception exception)
@@ -2018,15 +2020,13 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
         try
         {
             // Check destination ownership before validation creates any caches.
-            string destination = string.IsNullOrWhiteSpace(document.Path)
-                ? PackFileStore.NewPackPath(Plugin.DefinitionDirectory, document.Pack.packId ?? "")
-                : document.Path;
-            if (document.SourceText == null && File.Exists(destination))
-                throw new IOException("A pack already exists at this location. Select that pack to edit it, or choose a different pack ID.");
+            document.Workspace.Destination(Plugin.DefinitionDirectory, document.Path,
+                document.Pack.packId ?? "", document.SourceText);
             document.Pack.Validate(
                 string.IsNullOrWhiteSpace(document.Path)
                     ? "new pack"
                     : document.Path);
+            GetPackFolder(); // Pin draft artwork and preserve its cache namespace before validating assets.
             var names = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
             var ids = new HashSet<string>(
@@ -2114,18 +2114,28 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
                 {
                     NullValueHandling = NullValueHandling.Ignore
                 });
-            PackFileStore.Save(destination, json, document.SourceText);
-            document.Path = destination;
+            string oldFolder = document.Workspace.Folder;
+            ++previewGeneration; // Pending renders must not publish into the old folder.
+            document.Path = document.Workspace.Save(Plugin.DefinitionDirectory, document.Path,
+                document.Pack.packId ?? "", document.SourceText,
+                destination => PackFileStore.Save(destination, json, document.SourceText));
             document.SourceText = json;
             document.SavedSnapshot = JsonConvert.SerializeObject(document.Pack);
             string saved = Path.GetFileName(document.Path);
             // Keep other documents (and their unsaved edits) in memory.
             numberText.Clear();
             status =
-                $"Saved {saved}. Restart Silverpine to register changes.";
+                $"Saved {saved}. " +
+                (string.Equals(oldFolder, document.Workspace.Folder, StringComparison.Ordinal) ? "" :
+                    $"Pack folder is now '{Path.GetFileName(document.Workspace.Folder)}'. ") +
+                "Restart Silverpine to register changes.";
         }
         catch (Exception exception)
         {
+            // A failed rollback must not leave this document pointing at an old
+            // path and accidentally create a second pack on the next attempt.
+            if (!string.IsNullOrEmpty(document.Path) && !string.IsNullOrEmpty(document.Workspace.Folder))
+                document.Path = Path.Combine(document.Workspace.Folder, Path.GetFileName(document.Path));
             status = "Save failed: " + exception.Message;
             Plugin.Log.LogError("Item editor save failed: " + exception);
         }
@@ -2775,17 +2785,7 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
     {
         if (document == null)
             throw new InvalidOperationException("No pack is selected.");
-        if (!string.IsNullOrWhiteSpace(document.Path))
-            return Path.GetDirectoryName(document.Path)!;
-        string id = string.IsNullOrWhiteSpace(document.Pack.packId)
-            ? "new-item-pack"
-            : document.Pack.packId!;
-        string path = PackFileStore.NewPackPath(Plugin.DefinitionDirectory, id);
-        if (File.Exists(path))
-            throw new IOException("This pack ID already belongs to a saved pack. Select that pack or choose a different ID.");
-        string folder = Path.GetDirectoryName(path)!;
-        Directory.CreateDirectory(folder);
-        return folder;
+        return document.Workspace.GetFolder(Plugin.DefinitionDirectory, document.Pack.packId ?? "");
     }
 
     private static string ResolveAsset(

@@ -169,7 +169,7 @@ internal sealed partial class CustomItemEditorUI
                 GUILayout.Label("Pack ID");
                 document.Pack.packId = DrawWrappedTextInput(document.Pack.packId ?? "",
                     availableWidth: SidebarWidth - 2 * EditorFormLayout.PanelInset);
-                GUILayout.Label("Keep released IDs stable. Save pack to apply changes.", editorMuted!);
+                GUILayout.Label("Save renames this pack's dedicated folder to match. Keep released IDs stable: they identify items in saves.", editorMuted!);
             }
         }
         GUILayout.Space(14);
@@ -476,8 +476,7 @@ internal sealed partial class CustomItemEditorUI
                 if (item == null || item.useCloneVisuals) continue;
                 try
                 {
-                    string folder = Path.GetDirectoryName(string.IsNullOrWhiteSpace(pack.Path)
-                        ? PackFileStore.NewPackPath(Plugin.DefinitionDirectory, pack.Pack.packId ?? "") : pack.Path)!;
+                    string folder = pack.Workspace.GetFolder(Plugin.DefinitionDirectory, pack.Pack.packId ?? "");
                     PublishItemArt(item, folder, pack.Pack.packId ?? ""); count++;
                 }
                 catch (Exception error) { skipped++; Plugin.Log.LogWarning("Art index skipped '" + item.id + "': " + error.Message); }

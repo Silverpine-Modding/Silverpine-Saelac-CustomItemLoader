@@ -28,7 +28,7 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "renegadex.silverpine.customitemloader";
     public const string PluginName = "Custom Item Loader";
-    public const string PluginVersion = "3.0.7";
+    public const string PluginVersion = "3.0.8";
 
     internal static ManualLogSource Log = null!;
     internal static readonly Dictionary<string, Sprite> CustomSprites =
@@ -1485,7 +1485,7 @@ internal static class ItemPackLoader
     {
         string current = GetGlbCachePath(packDirectory, packId, itemId, cacheSuffix);
         if (File.Exists(current)) return current;
-        string legacyName = SanitizeFileName(packId + "__" + itemId + cacheSuffix);
+        string legacyName = SanitizeFileName(PackCacheIdentity.Resolve(packDirectory, packId) + "__" + itemId + cacheSuffix);
         string legacy = Path.Combine(packDirectory, ".cache", legacyName + ".png");
         if (!File.Exists(legacy)) return current;
 
@@ -1506,7 +1506,7 @@ internal static class ItemPackLoader
                     : new[] { "" };
                 foreach (string variant in variants)
                     if (string.Equals(legacyName,
-                        SanitizeFileName(pack.packId + "__" + item.id + variant),
+                        SanitizeFileName(PackCacheIdentity.Resolve(packDirectory, pack.packId) + "__" + item.id + variant),
                         StringComparison.OrdinalIgnoreCase))
                         claims.Add(GetGlbCachePath(packDirectory, pack.packId, item.id, variant));
             }

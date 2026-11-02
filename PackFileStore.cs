@@ -16,6 +16,11 @@ internal static class PackFileStore
         foreach (char character in id)
             if (!char.IsLetterOrDigit(character) && character != '.' && character != '_' && character != '-')
                 throw new InvalidDataException("Pack IDs may contain only letters, numbers, dots, underscores, and hyphens.");
+        string device = id.Split('.')[0].ToUpperInvariant();
+        if (device == "CON" || device == "PRN" || device == "AUX" || device == "NUL" ||
+            (device.Length == 4 && (device.StartsWith("COM", StringComparison.Ordinal) || device.StartsWith("LPT", StringComparison.Ordinal)) &&
+             "123456789¹²³".IndexOf(device[3]) >= 0))
+            throw new InvalidDataException("Choose a pack ID that is not a reserved Windows device name.");
         string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             + Path.DirectorySeparatorChar;
         string folder = Path.GetFullPath(Path.Combine(fullRoot, id));

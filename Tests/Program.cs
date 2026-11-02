@@ -16,6 +16,7 @@ void Check(bool value, string message)
 
 LifecycleChecks.Run(Check);
 FurnitureLightingChecks.Run(Check);
+PackRenameChecks.Run(Check);
 
 float panelBudget = 2 * EditorFormLayout.OuterInset + EditorFormLayout.SidebarWidth +
     EditorFormLayout.PreviewWidth + EditorFormLayout.DetailsWidth + 2 * EditorFormLayout.PanelGap;
@@ -429,6 +430,16 @@ if (args.Length == 1)
     Check(previewCalls.LastIndexOf("Button") > previewCalls.LastIndexOf("EndScrollView"),
         "Refresh preview is outside the scrolling preview content");
     Check(!Calls(editor.Methods.Single(m => m.Name == "SaveCurrent"), "RefreshDocuments"), "saving one pack cannot reload and discard other open documents");
+    Check(editor.Methods.Single(m => m.Name == "SaveCurrent").Body.Instructions.Any(i => i.Operand is MethodReference m &&
+        m.DeclaringType.Name == "PackWorkspace" && m.Name == "Save") &&
+        Calls(editor.Methods.Single(m => m.Name == "GetPackFolder"), "GetFolder"),
+        "compiled editor saves and asset imports use the same stable pack workspace");
+    var indexArt = editor.NestedTypes.Single(t => t.Name.StartsWith("<IndexArt>"));
+    Check(Calls(indexArt.Methods.Single(m => m.Name == "MoveNext"), "GetFolder"),
+        "background art indexing resolves each document's pinned workspace");
+    var loader = pluginAssembly.MainModule.Types.Single(t => t.Name == "ItemPackLoader");
+    Check(Calls(loader.Methods.Single(m => m.Name == "FindReadableGlbCachePath"), "Resolve"),
+        "legacy GLB cache lookup also resolves renamed cache identities");
     Check(Calls(editor.Methods.Single(m => m.Name == "Open"), "set_EscapeHandler") &&
         !Calls(editor.Methods.Single(m => m.Name == "Update"), "GetKeyDown"), "editor Escape is exclusively owned by its ModTools session");
     var furniture = pluginAssembly.MainModule.Types.Single(t => t.Name == "GeneratedFurnitureFactory");

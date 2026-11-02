@@ -36,7 +36,16 @@ Unity-style destroyed-object handling, missing-resource warnings/recovery, and
 compiled creation/load/refresh call sites. The game DLL is checked for the same
 pickup diffuse/unlit resource names. These checks do not render actual lighting.
 
-Editor smoke checks for 3.0.7: open through Modding Tools; exercise all four
+Pack-folder checks cover pinned draft assets, saved folder moves, arbitrary
+addon cache variants without a GLB, rename-back cache identity, atomic JSON
+backups, write-failure rollback, external edits, destination collisions, shared
+and nested packs, root containment, case-only renames, loose JSON files, grouped
+packs, reserved Windows names, and invalid/cyclic cache metadata.
+
+Editor smoke checks for 3.0.8: import art into a new pack, change its Pack ID,
+save, and restart. Confirm the artwork stays available under the final folder.
+Repeat with a cached-only GLB pack and a destination that already exists.
+Open through Modding Tools; exercise all four
 tabs and the native file picker; drag Front and Back to different positions,
 save/restart, rotate the placement cursor and placed furniture; confirm offsets
 match. Repeat with a single PNG, cached four-view art with its GLB absent,

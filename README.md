@@ -25,6 +25,28 @@ keeps the same on-disk format. Other mods can use `SharedArtApi` without CIL.
 CIL's `GlbCacheApi` remains a separate, model-render-cache migration API for
 add-ons; it does not implement or control the shared art library.
 
+## 3.0.8 pack-folder renaming
+
+Saving a pack now renames its dedicated folder to match the Pack ID, moving
+images, caches, and backups together. This also repairs older default folders
+whose JSON already has the intended ID. Parent grouping folders and JSON
+filenames are preserved. Loose JSON files in the pack root stay in place.
+
+Unsaved packs keep a stable draft artwork folder until Save, so changing the
+ID after importing art no longer strands the files. Existing destination
+folders, shared/nested pack folders, links, and external JSON edits block the
+rename rather than overwrite other work. If saving fails after moving a folder,
+the editor attempts to move it back and reports where the files remain.
+
+Keep released Pack IDs stable: they identify items and generated furniture in
+saves. Fixing a mismatched folder does **not** require changing its JSON ID.
+When an author changes an ID, `.cache/pack-identities.map` preserves existing
+render-cache names, including addon views. Distribute the entire `.cache`
+directory, including this map; original GLBs are still not required.
+
+The Release build and 193 headless regression checks pass. Live editor
+save/rename and restart checks still require in-game verification.
+
 ## 3.0.7 generated furniture lighting
 
 Generated furniture now uses Silverpine's `Materials/sprite-diffuse` material
@@ -276,7 +298,7 @@ session retains ownership. Pack edits do not hot-replace registered templates.
 
 ## API for crafting frameworks and other mods
 
-Custom Item Loader 3.0.7 exposes a public API in:
+Custom Item Loader 3.0.8 exposes a public API in:
 
 ```csharp
 using SilverpineMods.CustomItemLoader;

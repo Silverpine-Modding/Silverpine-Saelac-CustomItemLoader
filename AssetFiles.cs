@@ -11,7 +11,7 @@ internal static class AssetFiles
     // Length-delimited tuple: neither an item ID nor an addon suffix can alias
     // another cache entry. Keep the full digest, not a truncated display hash.
     internal static string CachePath(string folder, string pack, string item, string variant)
-        => Path.Combine(folder, ".cache", "v2-" + IdentityHash(pack, item, variant) + ".png");
+        => Path.Combine(folder, ".cache", "v2-" + IdentityHash(PackCacheIdentity.Resolve(folder, pack), item, variant) + ".png");
 
     internal static string FurnitureName(string pack, string item) =>
         "cil_generated_furniture__v2_" + IdentityHash(pack, item, "furniture");
