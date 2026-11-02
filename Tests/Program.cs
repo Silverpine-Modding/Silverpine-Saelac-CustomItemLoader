@@ -442,6 +442,16 @@ if (args.Length == 1)
         "legacy GLB cache lookup also resolves renamed cache identities");
     Check(Calls(editor.Methods.Single(m => m.Name == "Open"), "set_EscapeHandler") &&
         !Calls(editor.Methods.Single(m => m.Name == "Update"), "GetKeyDown"), "editor Escape is exclusively owned by its ModTools session");
+    Check(!Calls(editor.Methods.Single(m => m.Name == "OpenArtLibrary"), "IndexExistingArt"),
+        "opening an empty library cannot automatically restore deleted entries");
+    Check(Calls(editor.Methods.Single(m => m.Name == "DeleteLibraryEntry"), "Delete") &&
+        Calls(editor.Methods.Single(m => m.Name == "DeleteLibraryEntry"), "ReloadArtLibrary") &&
+        !Calls(editor.Methods.Single(m => m.Name == "DrawArtCard"), "DeleteLibraryEntry") &&
+        Calls(editor.Methods.Single(m => m.Name == "DrawArtLibrary"), "DeleteLibraryEntry"),
+        "library cards request confirmation; confirmed deletion uses framework API and refreshes thumbnails");
+    Check(editor.Methods.Single(m => m.Name == "HandleEscapeRequest").Body.Instructions.Any(i =>
+        i.OpCode == Mono.Cecil.Cil.OpCodes.Stfld && i.Operand is FieldReference field && field.Name == "artDeleteConfirmation"),
+        "Escape can cancel art deletion without deleting an asset");
     var furniture = pluginAssembly.MainModule.Types.Single(t => t.Name == "GeneratedFurnitureFactory");
     Check(Calls(furniture.Methods.Single(m => m.Name == "Attach"), "RegisterAlias"),
         "collision-safe furniture registration retains legacy save aliases");

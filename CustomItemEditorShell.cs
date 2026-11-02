@@ -18,6 +18,8 @@ internal sealed partial class CustomItemEditorUI
     private bool assetLibraryOpen;
     private bool indexingArt;
     private bool removeConfirmation;
+    private SharedArtLibrary.Entry? artDeleteConfirmation;
+    private long libraryRevision = -1;
     private string librarySearch = "";
     private int libraryPage;
     private Vector2 libraryScroll, previewScroll;
@@ -324,23 +326,37 @@ internal sealed partial class CustomItemEditorUI
 
     private void OpenArtLibrary()
     {
-        CancelOffsetDrag(); assetLibraryOpen = true; libraryPage = 0;
+        CancelOffsetDrag(); assetLibraryOpen = true; libraryPage = 0; artDeleteConfirmation = null;
         ReloadArtLibrary();
-        if (libraryEntries.Count == 0) IndexExistingArt();
     }
     private void ReloadArtLibrary()
     {
+        libraryRevision = Silverpine.ModdingTools.SharedArtApi.Revision;
         ClearLibraryThumbnails(); libraryEntries.Clear();
         try { libraryEntries.AddRange(SharedArtLibrary.ReadEntries(message => Plugin.Log.LogWarning("Art library: " + message))); }
         catch (Exception error) { status = "Cannot read shared library: " + error.Message; }
+        if (artDeleteConfirmation != null && !libraryEntries.Any(e => e.id == artDeleteConfirmation.id)) artDeleteConfirmation = null;
     }
     private void DrawArtLibrary()
     {
+        if (Event.current.type == EventType.Layout && libraryRevision != Silverpine.ModdingTools.SharedArtApi.Revision) ReloadArtLibrary();
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.BeginHorizontal(); GUILayout.Label("Shared asset library", editorHeading!);
-        if (DrawActionButton("Back to editor", 190)) assetLibraryOpen = false;
+        if (DrawActionButton("Back to editor", 190)) { assetLibraryOpen = false; artDeleteConfirmation = null; }
         GUILayout.EndHorizontal();
         GUILayout.Label("BepInEx/shared/ArtLibrary · reusable cached views · original object names", editorMuted!);
+        if (artDeleteConfirmation != null)
+        {
+            GUILayout.Label("Delete \"" + artDeleteConfirmation.originalName + "\" from the shared library?", editorHeading!);
+            GUILayout.Label("Pack copies and images used by other library entries stay intact. " +
+                "Mods reading this asset directly from the library may lose access. " +
+                "A recovery copy will be kept in ArtLibrary/trash.");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Confirm delete")) { DeleteLibraryEntry(artDeleteConfirmation.id); GUIUtility.ExitGUI(); }
+            if (GUILayout.Button("Cancel")) { artDeleteConfirmation = null; GUIUtility.ExitGUI(); }
+            GUILayout.EndHorizontal(); GUILayout.EndVertical();
+            return;
+        }
         string search = DrawWrappedTextInput(librarySearch,
             availableWidth: DesignWidth - 2 * EditorFormLayout.OuterInset - SidebarWidth -
                 EditorFormLayout.PanelGap - 2 * EditorFormLayout.PanelInset);
@@ -398,7 +414,23 @@ internal sealed partial class CustomItemEditorUI
         catch (Exception error) { failedLibraryThumbnails.Add(entry.id); GUI.Label(rect, "Preview unavailable: " + error.Message); }
         GUI.enabled = CurrentItem != null && !failedLibraryThumbnails.Contains(entry.id);
         if (GUILayout.Button("Use cached art")) { UseLibraryEntry(entry); GUIUtility.ExitGUI(); }
+        GUI.enabled = !indexingArt;
+        if (GUILayout.Button("Delete from library")) { artDeleteConfirmation = entry; GUIUtility.ExitGUI(); }
         GUI.enabled = true; GUILayout.EndVertical();
+    }
+    private void DeleteLibraryEntry(string id)
+    {
+        artDeleteConfirmation = null;
+        try
+        {
+            var result = Silverpine.ModdingTools.SharedArtApi.Delete(id);
+            ReloadArtLibrary();
+            status = result.Deleted
+                ? $"Art removed from the library; {result.DeletedImageCount} unused image(s) removed, " +
+                  $"{result.SharedImageCount} shared image(s) retained. Recovery copy: {result.RecoveryDirectory}"
+                : "This art was already removed from the library.";
+        }
+        catch (Exception error) { ReloadArtLibrary(); status = "Cannot delete shared art: " + error.Message; }
     }
     private void UseLibraryEntry(SharedArtLibrary.Entry entry)
     {

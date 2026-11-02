@@ -2849,6 +2849,7 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
             EndFilePickerModal();
         }
         else if (draggedItem != null) CancelOffsetDrag();
+        else if (artDeleteConfirmation != null) artDeleteConfirmation = null;
         else if (closeConfirmation) closeConfirmation = false;
         else if (assetLibraryOpen) assetLibraryOpen = false;
         else Close();
@@ -2858,6 +2859,7 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
     protected override void OnFrameworkSessionClosed()
     {
         open = false;
+        artDeleteConfirmation = null;
         indexingArt = false;
         CancelOffsetDrag();
         if (filePickerOpen && GenericListUI.Instance != null) GenericListUI.Instance.Close();
@@ -2870,6 +2872,7 @@ internal sealed partial class CustomItemEditorUI : ModToolBehaviour
     {
         CancelOffsetDrag();
         closeConfirmation = false;
+        artDeleteConfirmation = null;
         StopAllCoroutines();
         indexingArt = false;
         ClearLibraryThumbnails();

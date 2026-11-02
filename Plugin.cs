@@ -23,12 +23,12 @@ namespace SilverpineMods.CustomItemLoader;
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 [BepInDependency(
     Silverpine.ModdingTools.Plugin.PluginGuid,
-    "1.13.0")]
+    "1.13.1")]
 public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "renegadex.silverpine.customitemloader";
     public const string PluginName = "Custom Item Loader";
-    public const string PluginVersion = "3.0.8";
+    public const string PluginVersion = "3.0.9";
 
     internal static ManualLogSource Log = null!;
     internal static readonly Dictionary<string, Sprite> CustomSprites =

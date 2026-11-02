@@ -14,7 +14,7 @@ GLB cache PNGs. Source GLBs live in the shared
 ## Requirements
 
 - BepInEx for Silverpine 1.7.3
-- Silverpine Modding Tools 1.13.0 or newer
+- Silverpine Modding Tools 1.13.1 or newer
 
 Modding Tools supplies the shared Newtonsoft.Json 13.0.3 assembly. Do not place
 another `Newtonsoft.Json.dll` in the CustomItemLoader folder.
@@ -24,6 +24,26 @@ The existing editor uses the framework's `SharedArtLibrary` implementation and
 keeps the same on-disk format. Other mods can use `SharedArtApi` without CIL.
 CIL's `GlbCacheApi` remains a separate, model-render-cache migration API for
 add-ons; it does not implement or control the shared art library.
+
+## 3.0.9 shared-art deletion
+
+Each shared-library card now has **Delete from library**, with an explicit
+confirmation. Escape cancels confirmation. The framework preserves pack copies,
+source models and images used by other library entries, and keeps a recovery
+copy under `BepInEx/shared/ArtLibrary/trash`. It refuses deletion when catalog
+records are unsafe or unreadable. Direct library-path consumers may lose access.
+
+Deleting artwork affects the shared catalog for every mod. It does not remove
+items from packs or saves. Recovery copies are retained, so deletion does not
+automatically reclaim disk space. To restore, close the game and copy the recovery
+folder's `entries/` and `images/` contents back into the library, preserving
+existing files. See the Modding Tools README for the full deletion API contract.
+
+An empty library is no longer automatically indexed on opening: use **Index
+existing pack art** explicitly when wanted. Indexing or republishing can add
+previously deleted artwork again. Deletion is disabled during indexing.
+The browser refreshes after other mods publish or delete shared artwork,
+using the framework's in-memory revision rather than polling library files.
 
 ## 3.0.8 pack-folder renaming
 
@@ -253,9 +273,9 @@ the object's world transform; generated furniture hit bounds follow the art.
 ### Universal asset library
 
 The **Asset library** button opens reusable cached artwork with thumbnails,
-search, original object names, and view counts. On first open, existing pack
-art is indexed when the library is empty. **Index existing pack art** can be
-run again; missing sources are skipped and logged. Rendering a GLB also
+search, original object names, and view counts. **Index existing pack art**
+explicitly adds art from packs; missing sources are skipped and logged. An empty
+library stays empty until you index or publish artwork. Rendering a GLB also
 publishes its generated art. **Add current art** publishes existing images
 without changing the pack.
 
@@ -298,7 +318,7 @@ session retains ownership. Pack edits do not hot-replace registered templates.
 
 ## API for crafting frameworks and other mods
 
-Custom Item Loader 3.0.8 exposes a public API in:
+Custom Item Loader 3.0.9 exposes a public API in:
 
 ```csharp
 using SilverpineMods.CustomItemLoader;
